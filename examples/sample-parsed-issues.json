@@ -1,0 +1,35 @@
+{
+  "project": {
+    "id": "codex-boards",
+    "name": "codex-boards",
+    "repository": "codex-boards",
+    "workspacePath": "/home/stone/Web/codex-boards"
+  },
+  "issues": [
+    {
+      "id": "codex-boards:thread-abc:parent",
+      "kind": "parent",
+      "title": "Build Codex thread sync service",
+      "status": "in_progress",
+      "priority": "high",
+      "tags": ["backend", "has-commit", "has-tag"],
+      "subIssueCount": 2
+    },
+    {
+      "id": "codex-boards:thread-abc:sub-1",
+      "kind": "sub_issue",
+      "parentIssueId": "codex-boards:thread-abc:parent",
+      "title": "Persist parsed issues in SQLite",
+      "status": "todo",
+      "priority": "high"
+    },
+    {
+      "id": "codex-boards:thread-abc:sub-2",
+      "kind": "sub_issue",
+      "parentIssueId": "codex-boards:thread-abc:parent",
+      "title": "Ship Notion-style issue table and detail sheet",
+      "status": "todo",
+      "priority": "medium"
+    }
+  ]
+}

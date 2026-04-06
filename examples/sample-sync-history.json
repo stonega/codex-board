@@ -1,0 +1,74 @@
+{
+  "generatedAt": "2026-04-06T08:32:10.000Z",
+  "sync": {
+    "runId": "run-002",
+    "startedAt": "2026-04-06T08:31:41.000Z",
+    "completedAt": "2026-04-06T08:32:10.000Z",
+    "parserBaseUrl": "https://openrouter.ai/api/v1",
+    "parserModel": "openai/gpt-4.1-mini",
+    "responseModels": ["openai/gpt-4.1-mini-2026-04-01"],
+    "aiRequestCount": 3,
+    "tokenUsage": {
+      "promptTokens": 1420,
+      "completionTokens": 288,
+      "totalTokens": 1708
+    },
+    "scannedFiles": 20,
+    "changedFiles": 4,
+    "importedThreads": 3,
+    "skippedThreads": 1,
+    "aiParsedIssues": 5,
+    "fallbackIssues": 1,
+    "reviewIssues": 2,
+    "errors": [],
+    "parseLog": []
+  },
+  "runs": [
+    {
+      "runId": "run-002",
+      "startedAt": "2026-04-06T08:31:41.000Z",
+      "completedAt": "2026-04-06T08:32:10.000Z",
+      "parserBaseUrl": "https://openrouter.ai/api/v1",
+      "parserModel": "openai/gpt-4.1-mini",
+      "responseModels": ["openai/gpt-4.1-mini-2026-04-01"],
+      "aiRequestCount": 3,
+      "tokenUsage": {
+        "promptTokens": 1420,
+        "completionTokens": 288,
+        "totalTokens": 1708
+      },
+      "scannedFiles": 20,
+      "changedFiles": 4,
+      "importedThreads": 3,
+      "skippedThreads": 1,
+      "aiParsedIssues": 5,
+      "fallbackIssues": 1,
+      "reviewIssues": 2,
+      "errors": [],
+      "parseLog": []
+    },
+    {
+      "runId": "run-001",
+      "startedAt": "2026-04-05T18:11:03.000Z",
+      "completedAt": "2026-04-05T18:11:14.000Z",
+      "parserBaseUrl": null,
+      "parserModel": null,
+      "responseModels": [],
+      "aiRequestCount": 0,
+      "tokenUsage": {
+        "promptTokens": 0,
+        "completionTokens": 0,
+        "totalTokens": 0
+      },
+      "scannedFiles": 20,
+      "changedFiles": 2,
+      "importedThreads": 1,
+      "skippedThreads": 1,
+      "aiParsedIssues": 0,
+      "fallbackIssues": 2,
+      "reviewIssues": 2,
+      "errors": [],
+      "parseLog": []
+    }
+  ]
+}

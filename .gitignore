@@ -1,0 +1,12 @@
+node_modules
+.DS_Store
+.turbo
+dist
+build
+.wrangler
+coverage
+*.log
+apps/web/.react-router
+apps/web/.vite
+.tmp
+

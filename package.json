@@ -1,0 +1,21 @@
+{
+  "name": "codex-boards",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "bun@1.2.19",
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev": "bun run --filter @codex-boards/backend dev & bun run --filter @codex-boards/web dev",
+    "dev:backend": "bun run --filter @codex-boards/backend dev",
+    "dev:web": "bun run --filter @codex-boards/web dev",
+    "build": "bun run --filter @codex-boards/backend build && bun run --filter @codex-boards/web build",
+    "test": "bun test",
+    "check": "biome check .",
+    "format": "biome format --write ."
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@types/node": "^22.13.10",
+    "typescript": "^5.8.2"
+  }
+}

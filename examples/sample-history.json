@@ -1,0 +1,35 @@
+[
+  {
+    "threadId": "thread_001",
+    "title": "Fix auth redirect loop in dashboard",
+    "cwd": "/home/stone/Web/acme-dashboard",
+    "summary": "Debugged a redirect loop after login and patched the session guard.",
+    "timestamp": "2026-04-02T09:24:00.000Z",
+    "git": {
+      "repository": "acme-dashboard",
+      "branch": "fix/auth-loop",
+      "commitSha": "9f31c2e",
+      "commitMessage": "fix: stop dashboard auth redirect loop"
+    }
+  },
+  {
+    "threadId": "thread_002",
+    "title": "Add timeline view for project board",
+    "cwd": "/home/stone/Web/codex-boards",
+    "summary": "Planned UI structure for a board and future timeline mode.",
+    "timestamp": "2026-04-02T12:40:00.000Z",
+    "git": {
+      "repository": "codex-boards",
+      "branch": "feat/timeline-view",
+      "commitSha": "ad72f10",
+      "commitMessage": "feat: sketch timeline mode"
+    }
+  },
+  {
+    "threadId": "thread_003",
+    "title": "Refactor ingestion pipeline planning notes",
+    "cwd": "/home/stone/Web/codex-boards",
+    "summary": "Split history import into discovery, normalization, and classification stages.",
+    "timestamp": "2026-04-03T08:10:00.000Z"
+  }
+]

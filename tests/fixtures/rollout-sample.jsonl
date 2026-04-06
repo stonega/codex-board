@@ -1,0 +1,5 @@
+{"timestamp":"2026-04-05T05:00:00.000Z","type":"session_meta","payload":{"id":"thread-abc","timestamp":"2026-04-05T04:59:00.000Z","cwd":"/tmp/codex-boards-fixture"}}
+{"timestamp":"2026-04-05T05:00:01.000Z","type":"event_msg","payload":{"type":"user_message","message":"Build a sync service for the board.\n- Extract git commit info\n- Save issues into sqlite\n- Show a notion like table"}}
+{"timestamp":"2026-04-05T05:00:02.000Z","type":"event_msg","payload":{"type":"exec_command_end","command":["/usr/bin/zsh","-lc","git status --short --branch"],"aggregated_output":"On branch feat/thread-sync\nnothing to commit, working tree clean\ncommit 9f31c2edc0f\n"}}
+{"timestamp":"2026-04-05T05:00:03.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"I will build the sync service, expose the API, and add the issue table detail sheet."}]}}
+{"timestamp":"2026-04-05T05:00:04.000Z","type":"event_msg","payload":{"type":"exec_command_end","command":["/usr/bin/zsh","-lc","git tag"],"aggregated_output":"v0.1.0\n"}}

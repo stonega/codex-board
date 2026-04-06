@@ -1,0 +1,101 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: light;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica,
+    "Apple Color Emoji", Arial, sans-serif, "Segoe UI Emoji", "Segoe UI Symbol";
+  background: #ffffff;
+  color: #37352f;
+  --sidebar-bg: #fbfbfa;
+  --surface: #ffffff;
+  --border: rgba(55, 53, 47, 0.09);
+  --border-strong: rgba(55, 53, 47, 0.16);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --accent: #2383e2;
+  --accent-muted: rgba(35, 131, 226, 0.1);
+  --muted: rgba(55, 53, 47, 0.65);
+  --hover: rgba(55, 53, 47, 0.03);
+  --active: rgba(55, 53, 47, 0.06);
+}
+
+@theme {
+  --color-notion-bg: #ffffff;
+  --color-notion-sidebar: #fbfbfa;
+  --color-notion-text: #37352f;
+  --color-notion-muted: rgba(55, 53, 47, 0.65);
+  --color-notion-border: rgba(55, 53, 47, 0.09);
+  --color-notion-hover: rgba(55, 53, 47, 0.03);
+  --color-notion-active: rgba(55, 53, 47, 0.06);
+  --color-notion-blue: #2383e2;
+}
+
+@layer base {
+  * {
+    @apply border-notion-border;
+  }
+  body {
+    @apply bg-notion-bg text-notion-text antialiased;
+  }
+}
+
+/* Custom UI Components used in App.tsx that aren't yet fully tailwindized in the file */
+.ui-button {
+  @apply h-7 px-2.5 inline-flex items-center justify-center gap-1.5 rounded-md border border-transparent bg-transparent transition-all active:scale-[0.97] whitespace-nowrap text-sm;
+}
+
+.ui-button-default {
+  @apply bg-notion-blue text-white font-medium hover:bg-blue-600;
+}
+
+.ui-button-outline {
+  @apply border-notion-border bg-white text-notion-muted hover:bg-notion-hover hover:text-notion-text;
+}
+
+.ui-button-ghost,
+.ui-button-secondary {
+  @apply text-notion-muted hover:bg-notion-hover hover:text-notion-text;
+}
+
+.ui-button-secondary {
+  @apply bg-notion-active;
+}
+
+.ui-button-sm {
+  @apply h-6 px-1.5 text-[0.81rem];
+}
+
+.ui-badge {
+  @apply h-5 px-1.5 inline-flex items-center rounded bg-notion-active text-[0.75rem] font-medium text-notion-muted;
+}
+
+.ui-input {
+  @apply h-7 w-60 px-2 bg-transparent border-none outline-none focus:bg-notion-hover rounded text-[0.81rem];
+}
+
+.ui-select {
+  @apply h-7 px-2 bg-transparent border-none outline-none cursor-pointer text-notion-muted hover:bg-notion-hover rounded text-[0.81rem];
+}
+
+.title-cell strong {
+  @apply font-medium;
+}
+
+.title-cell p {
+  @apply text-[0.75rem] text-notion-muted mt-0.5;
+}
+
+.row-open-button {
+  @apply w-full text-left;
+}
+
+.project-avatar {
+  @apply w-6 h-6 flex items-center justify-center bg-notion-active text-notion-muted rounded-full font-semibold text-[0.875rem] shrink-0;
+}
+
+.project-link-active .project-avatar {
+  @apply bg-notion-blue text-white;
+}
+
+.payload-preview {
+  @apply bg-[#f7f7f5] border border-notion-border p-3 rounded font-mono text-[0.81rem] whitespace-pre-wrap break-all;
+}

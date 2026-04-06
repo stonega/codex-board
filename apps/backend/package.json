@@ -1,0 +1,15 @@
+{
+  "name": "@codex-boards/backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --hot src/index.ts",
+    "build": "bun build src/index.ts --target bun --outdir dist",
+    "start": "bun src/index.ts"
+  },
+  "dependencies": {
+    "@codex-boards/domain": "workspace:*",
+    "hono": "^4.7.4"
+  }
+}
