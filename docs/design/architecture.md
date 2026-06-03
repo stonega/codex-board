@@ -10,6 +10,8 @@ The product needs two independently evolving surfaces:
 
 - a backend that ingests history, enriches it, and exposes query APIs
 - a frontend that presents projects, threads, and inferred work categories
+- a desktop shell that packages both for local desktop workflows
+- a native GNOME shell for Linux workflows that uses platform widgets instead of an embedded web view
 
 The domain model is central to both, so it lives in a shared package.
 
@@ -24,6 +26,14 @@ The domain model is central to both, so it lives in a shared package.
   - React UI
   - Notion-style project/issues workspace
   - filters, saved views, and issue detail sheet
+- `apps/desktop`
+  - Tauri desktop wrapper
+  - local backend process lifecycle
+  - runtime API base URL injection for the shared web UI
+- `apps/gnome`
+  - GJS application using GTK 4 and libadwaita widgets
+  - local backend process lifecycle matching the Tauri desktop app
+  - Flatpak manifest targeting `org.gnome.Platform`/`org.gnome.Sdk` runtime version `50`
 - `packages/domain`
   - issue, project, sync, and evidence types
   - deterministic fallback helpers and confidence rules
@@ -69,3 +79,5 @@ Primary endpoints:
 - `POST /api/views`
 
 The web UI consumes these endpoints directly and renders project navigation, filterable issue tables, a runtime parser settings sheet with sync history, and a right-side detail sheet.
+
+The desktop shells reuse the same HTTP API. The Tauri app launches the backend as a local companion process, waits for readiness, and then loads the shared web UI against the injected API base URL. The GNOME app follows the same sidecar lifecycle, but renders project navigation, filters, issue detail, parser settings, sync history, review triage, saved views, and Multica export with native GTK/libadwaita controls.

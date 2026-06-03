@@ -10,16 +10,33 @@ export interface AppConfig {
   openAiModel: string | null;
 }
 
+function resolveProjectRoot(): string {
+  return join(import.meta.dir, '..', '..', '..');
+}
+
+export function resolveDatabasePath(
+  projectRoot = resolveProjectRoot(),
+): string {
+  const appDataRoot = process.env.CODEX_BOARDS_APP_DATA_DIR;
+
+  if (appDataRoot && appDataRoot.trim().length > 0) {
+    return join(appDataRoot, 'codex-boards.sqlite');
+  }
+
+  return (
+    process.env.CODEX_BOARDS_DB_PATH ??
+    join(projectRoot, '.tmp', 'codex-boards.sqlite')
+  );
+}
+
 export function getConfig(): AppConfig {
-  const projectRoot = join(import.meta.dir, '..', '..', '..');
+  const projectRoot = resolveProjectRoot();
 
   return {
-    port: Number(process.env.PORT ?? 8787),
+    port: Number(process.env.PORT ?? 7788),
     sessionsRoot:
       process.env.CODEX_SESSIONS_ROOT ?? join(homedir(), '.codex', 'sessions'),
-    databasePath:
-      process.env.CODEX_BOARDS_DB_PATH ??
-      join(projectRoot, '.tmp', 'codex-boards.sqlite'),
+    databasePath: resolveDatabasePath(projectRoot),
     openAiBaseUrl:
       process.env.OPENAI_COMPAT_BASE_URL ?? process.env.OPENAI_BASE_URL ?? null,
     openAiApiKey:

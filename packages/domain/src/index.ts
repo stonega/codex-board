@@ -150,6 +150,31 @@ export interface SyncResponse {
   sync: SyncDiagnostics;
 }
 
+export interface ExportMulticaPayload {
+  projectId: string;
+  issueIds?: string[];
+  includeChildren?: boolean;
+  runSync?: boolean;
+  dryRun?: boolean;
+}
+
+export interface ExportedMulticaIssue {
+  sourceIssueId: string;
+  multicaIssueId: string | null;
+  title: string;
+  command: string[];
+  dryRun: boolean;
+}
+
+export interface ExportMulticaResponse {
+  ok: boolean;
+  exported: ExportedMulticaIssue[];
+  skippedChildren: Array<{
+    sourceIssueId: string;
+    reason: string;
+  }>;
+}
+
 export interface ParserSettings {
   baseUrl: string | null;
   model: string | null;

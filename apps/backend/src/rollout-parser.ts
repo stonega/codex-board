@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 
 import {
@@ -248,8 +249,13 @@ function sliceHeadTail(value: string, maxLength: number): string {
 
 function findGitRoot(cwd: string): string | null {
   let current = cwd;
+  const tempRoot = tmpdir();
 
   while (current.length > 1) {
+    if (current === tempRoot) {
+      return null;
+    }
+
     if (existsSync(join(current, '.git'))) {
       return current;
     }

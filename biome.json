@@ -1,7 +1,16 @@
 {
   "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
   "files": {
-    "ignore": ["apps/backend/dist/**", "apps/web/dist/**"]
+    "ignore": [
+      "apps/backend/dist/**",
+      "apps/web/dist/**",
+      "apps/desktop/src-tauri/target/**",
+      "apps/desktop/src-tauri/gen/**",
+      ".flatpak-builder/**",
+      "apps/gnome/builddir/**",
+      "apps/gnome/build-flatpak/**",
+      "apps/gnome/.flatpak-builder/**"
+    ]
   },
   "formatter": {
     "enabled": true,

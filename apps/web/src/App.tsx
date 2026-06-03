@@ -3,6 +3,7 @@ import {
   Check,
   ChevronRight,
   Database,
+  ExternalLink,
   Filter,
   GitCommit,
   Layout,
@@ -23,6 +24,7 @@ import { startTransition, useEffect, useMemo, useState } from 'react';
 import { Route, Routes } from 'react-router';
 
 import type {
+  ExportMulticaResponse,
   IssueDetailResponse,
   IssueFilters,
   IssueListResponse,
@@ -43,8 +45,7 @@ import { Input } from './components/ui/input';
 import { Select } from './components/ui/select';
 import { Sheet } from './components/ui/sheet';
 import { Table, TableEmpty, TableWrapper } from './components/ui/table';
-
-const API_BASE_URL = 'http://localhost:8787/api';
+import { resolveApiBaseUrl } from './lib/runtime';
 
 const STATUS_OPTIONS: Array<IssueStatus | 'all'> = [
   'all',
@@ -100,7 +101,8 @@ function getTagBadgeClass(tag: string): string {
 }
 
 async function fetchJson<T>(path: string): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`);
+  const apiBaseUrl = await resolveApiBaseUrl();
+  const response = await fetch(`${apiBaseUrl}${path}`);
   if (!response.ok) {
     throw new Error(`Request failed with ${response.status}`);
   }
@@ -109,7 +111,8 @@ async function fetchJson<T>(path: string): Promise<T> {
 }
 
 async function postJson<T>(path: string, body?: unknown): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const apiBaseUrl = await resolveApiBaseUrl();
+  const response = await fetch(`${apiBaseUrl}${path}`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -665,6 +668,8 @@ function BoardPage() {
   const [loadingSettings, setLoadingSettings] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
   const [runningSync, setRunningSync] = useState(false);
+  const [exportingMultica, setExportingMultica] = useState(false);
+  const [exportMessage, setExportMessage] = useState<string | null>(null);
   const [filters, setFilters] = useState<IssueFilters>({
     status: 'all',
     priority: 'all',
@@ -774,6 +779,7 @@ function BoardPage() {
   async function runSync() {
     setRunningSync(true);
     setError(null);
+    setExportMessage(null);
 
     try {
       const response = await postJson<SyncResponse>('/sync');
@@ -894,8 +900,8 @@ function BoardPage() {
 
   const parserReady = Boolean(
     settingsResponse?.parser.baseUrl &&
-    settingsResponse?.parser.model &&
-    settingsResponse?.parser.apiKeyConfigured,
+      settingsResponse?.parser.model &&
+      settingsResponse?.parser.apiKeyConfigured,
   );
 
   function applyParserPreset(preset: keyof typeof PARSER_PRESETS) {
@@ -905,6 +911,41 @@ function BoardPage() {
       baseUrl: next.baseUrl,
       model: next.model,
     }));
+  }
+
+  async function exportProjectToMultica() {
+    if (!selectedProjectId) {
+      return;
+    }
+
+    setExportingMultica(true);
+    setError(null);
+    setExportMessage(null);
+
+    try {
+      const response = await postJson<ExportMulticaResponse>(
+        '/export/multica',
+        {
+          projectId: selectedProjectId,
+          includeChildren: true,
+          runSync: false,
+        },
+      );
+
+      const skippedSuffix =
+        response.skippedChildren.length > 0
+          ? ` ${response.skippedChildren.length} child issues were skipped.`
+          : '';
+      setExportMessage(
+        `Exported ${response.exported.length} issues to Multica.${skippedSuffix}`,
+      );
+    } catch (exportError) {
+      setError(
+        exportError instanceof Error ? exportError.message : 'Unknown error',
+      );
+    } finally {
+      setExportingMultica(false);
+    }
   }
 
   return (
@@ -1034,6 +1075,15 @@ function BoardPage() {
                 <Button variant="ghost" size="sm">
                   <Filter size={14} /> Filter
                 </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void exportProjectToMultica()}
+                  disabled={!selectedProjectId || exportingMultica}
+                >
+                  <ExternalLink size={14} />
+                  {exportingMultica ? 'Exporting…' : 'Export to Multica'}
+                </Button>
                 <Button variant="default" size="sm">
                   <Plus size={14} /> New
                 </Button>
@@ -1123,6 +1173,12 @@ function BoardPage() {
             {error ? (
               <p className="mx-12 mb-3 bg-red-50 border border-red-100 p-3 rounded text-sm text-red-800">
                 {error}
+              </p>
+            ) : null}
+
+            {exportMessage ? (
+              <p className="mx-12 mb-3 rounded border border-emerald-100 bg-emerald-50 p-3 text-sm text-emerald-800">
+                {exportMessage}
               </p>
             ) : null}
 

@@ -5,6 +5,7 @@ import { describe, expect, test } from 'bun:test';
 
 import {
   readParserSettings,
+  resolveDatabasePath,
   updateParserSettings,
 } from '../../apps/backend/src/config';
 import { createAppServer } from '../../apps/backend/src/index';
@@ -51,7 +52,7 @@ describe('domain helpers', () => {
 describe('parser settings', () => {
   test('normalizes runtime parser settings updates', () => {
     const config = {
-      port: 8787,
+      port: 7788,
       sessionsRoot: '/tmp/codex-sessions',
       databasePath: '/tmp/codex-boards-test.sqlite',
       openAiBaseUrl: null,
@@ -93,7 +94,7 @@ describe('parser settings', () => {
     mkdirSync(root, { recursive: true });
 
     const server = createAppServer({
-      port: 8787,
+      port: 7788,
       sessionsRoot: join(root, 'sessions'),
       databasePath: join(root, 'boards.sqlite'),
       openAiBaseUrl: 'http://localhost:11434/v1',
@@ -150,7 +151,7 @@ describe('parser settings', () => {
     const sessionsRoot = join(root, 'sessions');
 
     const firstServer = createAppServer({
-      port: 8787,
+      port: 7788,
       sessionsRoot,
       databasePath,
       openAiBaseUrl: null,
@@ -179,7 +180,7 @@ describe('parser settings', () => {
     }
 
     const restartedServer = createAppServer({
-      port: 8787,
+      port: 7788,
       sessionsRoot,
       databasePath,
       openAiBaseUrl: null,
@@ -209,6 +210,32 @@ describe('parser settings', () => {
     }
   });
 
+  test('prefers desktop app data paths when configured', () => {
+    const originalAppDataDir = process.env.CODEX_BOARDS_APP_DATA_DIR;
+    const originalDatabasePath = process.env.CODEX_BOARDS_DB_PATH;
+
+    process.env.CODEX_BOARDS_APP_DATA_DIR = '/tmp/codex-boards-app-data';
+    process.env.CODEX_BOARDS_DB_PATH = '/tmp/ignored.sqlite';
+
+    try {
+      expect(resolveDatabasePath('/tmp/project-root')).toBe(
+        '/tmp/codex-boards-app-data/codex-boards.sqlite',
+      );
+    } finally {
+      if (originalAppDataDir === undefined) {
+        process.env.CODEX_BOARDS_APP_DATA_DIR = undefined;
+      } else {
+        process.env.CODEX_BOARDS_APP_DATA_DIR = originalAppDataDir;
+      }
+
+      if (originalDatabasePath === undefined) {
+        process.env.CODEX_BOARDS_DB_PATH = undefined;
+      } else {
+        process.env.CODEX_BOARDS_DB_PATH = originalDatabasePath;
+      }
+    }
+  });
+
   test('returns parse log entries from sync runs through the api', async () => {
     const root = `/tmp/codex-boards-sync-${Date.now()}`;
     const sessionsRoot = join(root, 'sessions');
@@ -229,7 +256,7 @@ describe('parser settings', () => {
     );
 
     const server = createAppServer({
-      port: 8787,
+      port: 7788,
       sessionsRoot,
       databasePath: join(root, 'boards.sqlite'),
       openAiBaseUrl: null,
@@ -288,6 +315,150 @@ describe('parser settings', () => {
     }
   });
 
+  test('exports project issues to multica through the api', async () => {
+    const root = `/tmp/codex-boards-export-${Date.now()}`;
+    mkdirSync(root, { recursive: true });
+
+    const server = createAppServer({
+      port: 7788,
+      sessionsRoot: join(root, 'sessions'),
+      databasePath: join(root, 'boards.sqlite'),
+      openAiBaseUrl: null,
+      openAiApiKey: null,
+      openAiModel: null,
+    });
+
+    try {
+      server.database.upsertProject({
+        id: 'codex-boards',
+        name: 'codex-boards',
+        repository: 'codex-boards',
+        workspacePath: '/tmp/codex-boards',
+        issueCount: 1,
+        subIssueCount: 1,
+        needsReviewCount: 0,
+        lastUpdatedAt: '2026-04-09T00:00:00.000Z',
+      });
+
+      server.database.upsertIssue({
+        id: 'issue-parent',
+        threadId: 'thread-1',
+        projectId: 'codex-boards',
+        parentIssueId: null,
+        kind: 'parent',
+        title: 'Export issues to Multica',
+        status: 'todo',
+        priority: 'high',
+        assignee: null,
+        dueDate: null,
+        tags: ['backend'],
+        summary: 'Export the board data to Multica.',
+        updatedAt: '2026-04-09T00:00:00.000Z',
+        parseMode: 'fallback',
+        confidence: 0.6,
+        needsReview: false,
+        git: {
+          repository: 'codex-boards',
+          workspacePath: '/tmp/codex-boards',
+          branch: 'feat/export',
+          commits: [],
+          tags: [],
+        },
+        evidence: {
+          rolloutPath: '/tmp/rollout.jsonl',
+          sessionId: 'session-1',
+          threadId: 'thread-1',
+          warnings: [],
+          parsePayloadPreview: 'preview',
+        },
+        subIssueCount: 1,
+        children: [],
+      });
+
+      server.database.upsertIssue({
+        id: 'issue-child',
+        threadId: 'thread-1',
+        projectId: 'codex-boards',
+        parentIssueId: 'issue-parent',
+        kind: 'sub_issue',
+        title: 'Export child issues to Multica',
+        status: 'todo',
+        priority: 'medium',
+        assignee: null,
+        dueDate: null,
+        tags: ['backend'],
+        summary: 'Export child issue data to Multica.',
+        updatedAt: '2026-04-09T00:00:00.000Z',
+        parseMode: 'fallback',
+        confidence: 0.6,
+        needsReview: false,
+        git: {
+          repository: 'codex-boards',
+          workspacePath: '/tmp/codex-boards',
+          branch: 'feat/export',
+          commits: [],
+          tags: [],
+        },
+        evidence: {
+          rolloutPath: '/tmp/rollout.jsonl',
+          sessionId: 'session-1',
+          threadId: 'thread-1',
+          warnings: [],
+          parsePayloadPreview: 'preview',
+        },
+        subIssueCount: 0,
+        children: [],
+      });
+
+      const response = await server.app.request('/api/export/multica', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          projectId: 'codex-boards',
+          runSync: false,
+          dryRun: true,
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      const json = (await response.json()) as {
+        ok: boolean;
+        exported: Array<{
+          sourceIssueId: string;
+          title: string;
+          dryRun: boolean;
+          command: string[];
+        }>;
+        skippedChildren: Array<{ sourceIssueId: string; reason: string }>;
+      };
+      expect(json).toMatchObject({
+        ok: true,
+        exported: [
+          {
+            sourceIssueId: 'issue-parent',
+            dryRun: true,
+            title: 'Export issues to Multica',
+          },
+          {
+            sourceIssueId: 'issue-child',
+            dryRun: true,
+            title: 'Export child issues to Multica',
+          },
+        ],
+        skippedChildren: [],
+      });
+      expect(json.exported).toHaveLength(2);
+      expect(json.exported[0]?.command).toContain('--title');
+      expect(json.exported[1]?.command).toContain('--parent');
+      expect(json.exported[1]?.command).toContain('dry-run:issue-parent');
+    } finally {
+      server.close();
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   test('stores sync usage details and exposes sync history in settings', async () => {
     const root = `/tmp/codex-boards-sync-ai-${Date.now()}`;
     const sessionsRoot = join(root, 'sessions');
@@ -342,7 +513,7 @@ describe('parser settings', () => {
       );
 
     const server = createAppServer({
-      port: 8787,
+      port: 7788,
       sessionsRoot,
       databasePath: join(root, 'boards.sqlite'),
       openAiBaseUrl: 'http://localhost:11434/v1',
@@ -494,7 +665,7 @@ describe('parser settings', () => {
     };
 
     const server = createAppServer({
-      port: 8787,
+      port: 7788,
       sessionsRoot,
       databasePath: join(root, 'boards.sqlite'),
       openAiBaseUrl: null,
@@ -586,7 +757,7 @@ describe('parser settings', () => {
     );
 
     const server = createAppServer({
-      port: 8787,
+      port: 7788,
       sessionsRoot,
       databasePath: join(root, 'boards.sqlite'),
       openAiBaseUrl: null,

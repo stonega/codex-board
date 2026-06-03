@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+  type ExportMulticaPayload,
   type IssueFilters,
   type ParsedIssue,
   type SavedView,
@@ -11,6 +12,7 @@ import {
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 
+import { exportIssuesToMultica, getCliHelpText, parseCliCommand } from './cli';
 import {
   type AppConfig,
   applyPersistedParserSettings,
@@ -181,6 +183,32 @@ export function createAppServer(config: AppConfig = getConfig()) {
     });
   });
 
+  app.post('/api/export/multica', async (context) => {
+    const body = (await context.req.json()) as ExportMulticaPayload;
+
+    if (!body?.projectId) {
+      return context.json({ message: 'projectId is required' }, 400);
+    }
+
+    if (body.runSync !== false) {
+      await syncService.sync();
+    }
+
+    const result = await exportIssuesToMultica(database, {
+      projectId: body.projectId,
+      issueIds: Array.isArray(body.issueIds) ? body.issueIds.map(String) : [],
+      includeChildren: body.includeChildren !== false,
+      runSync: body.runSync !== false,
+      dryRun: body.dryRun === true,
+    });
+
+    return context.json({
+      ok: true,
+      exported: result.exported,
+      skippedChildren: result.skippedChildren,
+    });
+  });
+
   app.get('/api/sync/runs', (context) => {
     const response: SyncRunListResponse = {
       generatedAt: new Date().toISOString(),
@@ -220,17 +248,79 @@ export function createAppServer(config: AppConfig = getConfig()) {
   };
 }
 
-const server = createAppServer();
-
-export default {
-  port: server.config.port,
-  fetch: server.app.fetch,
-};
+export function serveAppServer(server = createAppServer()) {
+  return Bun.serve({
+    port: server.config.port,
+    fetch: server.app.fetch,
+  });
+}
 
 if (import.meta.main) {
-  await server.syncService.sync().catch((error) => {
-    console.error('Initial sync failed', error);
-  });
+  const args = process.argv.slice(2);
+  let server: ReturnType<typeof createAppServer> | null = null;
 
-  console.log(`Backend listening on http://localhost:${server.config.port}`);
+  try {
+    const command = parseCliCommand(args);
+
+    if (command.command === 'help') {
+      console.log(getCliHelpText());
+    } else if (command.command === 'serve') {
+      server = createAppServer();
+      serveAppServer(server);
+      await server.syncService.sync().catch((error) => {
+        console.error('Initial sync failed', error);
+      });
+
+      console.log(
+        `Backend listening on http://localhost:${server.config.port}`,
+      );
+    } else if (command.command === 'export-multica') {
+      server = createAppServer();
+      if (command.options?.runSync) {
+        await server.syncService.sync();
+      }
+
+      const result = await exportIssuesToMultica(
+        server.database,
+        command.options,
+      );
+
+      if (command.options.dryRun) {
+        console.log('Multica dry run commands:');
+        for (const entry of result.exported) {
+          console.log(
+            `multica ${entry.command.map((part) => JSON.stringify(part)).join(' ')}`,
+          );
+        }
+      } else {
+        console.log(`Exported ${result.exported.length} issues to Multica.`);
+      }
+
+      if (result.skippedChildren.length > 0) {
+        for (const entry of result.skippedChildren) {
+          console.warn(`Skipped child ${entry.sourceIssueId}: ${entry.reason}`);
+        }
+      }
+
+      if (!command.options.dryRun) {
+        console.log(
+          JSON.stringify(
+            {
+              exported: result.exported,
+              skippedChildren: result.skippedChildren,
+            },
+            null,
+            2,
+          ),
+        );
+      }
+
+      server.close();
+    }
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    console.error(getCliHelpText());
+    server?.close();
+    process.exitCode = 1;
+  }
 }

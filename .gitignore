@@ -1,6 +1,7 @@
 node_modules
 .DS_Store
 .turbo
+.flatpak-builder
 dist
 build
 .wrangler
@@ -8,5 +9,11 @@ coverage
 *.log
 apps/web/.react-router
 apps/web/.vite
+apps/desktop/src-tauri/gen
+apps/desktop/src-tauri/target
+apps/gnome/builddir
+apps/gnome/build-flatpak
+apps/gnome/.flatpak-builder
+apps/gnome/resources/backend/codex-boards-backend
+*.AppImage
 .tmp
-

@@ -1,0 +1,2 @@
+#!/usr/bin/env sh
+exec @GJS@ -m @PKGDATADIR@/main.js "$@"

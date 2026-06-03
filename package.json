@@ -8,7 +8,12 @@
     "dev": "bun run --filter @codex-boards/backend dev & bun run --filter @codex-boards/web dev",
     "dev:backend": "bun run --filter @codex-boards/backend dev",
     "dev:web": "bun run --filter @codex-boards/web dev",
+    "dev:desktop": "bun run --filter @codex-boards/desktop dev",
+    "dev:gnome": "bun run --filter @codex-boards/gnome dev",
     "build": "bun run --filter @codex-boards/backend build && bun run --filter @codex-boards/web build",
+    "build:desktop": "bun run --filter @codex-boards/desktop build",
+    "build:gnome": "bun run --filter @codex-boards/gnome build",
+    "flatpak:gnome": "bun run --filter @codex-boards/gnome flatpak:build",
     "test": "bun test",
     "check": "biome check .",
     "format": "biome format --write ."

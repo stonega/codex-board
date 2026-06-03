@@ -1,6 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import { BrowserRouter } from 'react-router';
+import { BrowserRouter, HashRouter } from 'react-router';
 
 import { App } from './App';
 import './styles.css';
@@ -11,10 +11,15 @@ if (!rootElement) {
   throw new Error('Missing root element');
 }
 
+const Router =
+  typeof window !== 'undefined' && window.__TAURI_INTERNALS__ !== undefined
+    ? HashRouter
+    : BrowserRouter;
+
 ReactDOM.createRoot(rootElement).render(
   <React.StrictMode>
-    <BrowserRouter>
+    <Router>
       <App />
-    </BrowserRouter>
+    </Router>
   </React.StrictMode>,
 );

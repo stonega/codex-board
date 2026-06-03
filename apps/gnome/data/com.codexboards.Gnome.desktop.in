@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Codex Boards
+Comment=Browse local Codex rollout history as native GNOME project boards
+Exec=codex-boards-gnome
+Icon=com.codexboards.Gnome
+Terminal=false
+Type=Application
+Categories=GNOME;GTK;Development;ProjectManagement;
+StartupNotify=true
