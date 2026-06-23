@@ -12,10 +12,22 @@ export interface ExportMulticaCliOptions {
   dryRun: boolean;
 }
 
-export interface ParsedCliCommand {
-  command: 'serve' | 'export-multica' | 'help';
-  options?: ExportMulticaCliOptions;
+export interface ServeCliOptions {
+  port: number | null;
 }
+
+export type ParsedCliCommand =
+  | {
+      command: 'serve';
+      options: ServeCliOptions;
+    }
+  | {
+      command: 'export-multica';
+      options: ExportMulticaCliOptions;
+    }
+  | {
+      command: 'help';
+    };
 
 export interface MulticaCommandResult {
   exitCode: number;
@@ -37,7 +49,7 @@ export type RunMulticaCommand = (
 
 const HELP_TEXT = `Usage:
   bun src/index.ts
-  bun src/index.ts serve
+  bun src/index.ts serve [--port <port>]
   bun src/index.ts issues export multica --project <project-id> [--issue <issue-id>] [--dry-run] [--skip-sync] [--no-children]
 
 Commands:
@@ -48,6 +60,7 @@ Commands:
       Create Multica issues from the current local board state.
 
 Flags:
+  --port <port>          Serve the backend on a specific local port.
   --project <project-id>   Export issues from a single project. Required.
   --issue <issue-id>       Export only the selected parent issue. Repeatable.
   --dry-run                Print the Multica commands without executing them.
@@ -60,18 +73,48 @@ export function getCliHelpText(): string {
   return HELP_TEXT;
 }
 
-export function parseCliCommand(args: string[]): ParsedCliCommand {
-  if (
-    args.length === 0 ||
-    args[0] === 'serve' ||
-    args[0] === 'server' ||
-    args[0] === 'start'
-  ) {
-    return { command: 'serve' };
+function parsePort(value: string): number {
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new Error('--port must be a TCP port from 1 to 65535');
   }
 
+  return port;
+}
+
+export function parseCliCommand(args: string[]): ParsedCliCommand {
   if (args[0] === 'help' || args.includes('--help') || args.includes('-h')) {
     return { command: 'help' };
+  }
+
+  if (args.length === 0) {
+    return { command: 'serve', options: { port: null } };
+  }
+
+  if (args[0] === 'serve' || args[0] === 'server' || args[0] === 'start') {
+    const options: ServeCliOptions = {
+      port: null,
+    };
+    const serveArgs = args.slice(1);
+
+    for (let index = 0; index < serveArgs.length; index += 1) {
+      const token = serveArgs[index];
+
+      if (token === '--port') {
+        const value = serveArgs[index + 1];
+        if (!value) {
+          throw new Error('--port requires a value');
+        }
+
+        options.port = parsePort(value);
+        index += 1;
+        continue;
+      }
+
+      throw new Error(`Unknown serve flag: ${token}`);
+    }
+
+    return { command: 'serve', options };
   }
 
   const exportCommand =

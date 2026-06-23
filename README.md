@@ -25,6 +25,17 @@ The target workflow is:
 
 ```bash
 bun install
+bun run codex-board
+```
+
+The `codex-board` CLI starts the backend and web app locally, waits until both
+are ready, then opens the web UI in your browser. Use the web UI's sync action
+to refresh local Codex session data after the page opens. It is also exposed as
+a package binary named `codex-board` for linked or installed CLI use.
+
+Separate local servers:
+
+```bash
 bun run dev:backend
 bun run dev:web
 ```
@@ -78,6 +89,18 @@ bun run flatpak:gnome
 ```
 
 ## CLI
+
+Open the local web app:
+
+```bash
+codex-board
+```
+
+Useful local flags:
+
+- `--no-open` to start the local servers without opening a browser
+- `--backend-port <port>` to choose the backend API port
+- `--web-port <port>` to choose the web UI port
 
 Export a project into Multica from the backend CLI:
 

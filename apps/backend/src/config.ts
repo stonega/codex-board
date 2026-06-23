@@ -33,7 +33,9 @@ export function getConfig(): AppConfig {
   const projectRoot = resolveProjectRoot();
 
   return {
-    port: Number(process.env.PORT ?? 7788),
+    port: Number(
+      process.env.CODEX_BOARDS_BACKEND_PORT ?? process.env.PORT ?? 7788,
+    ),
     sessionsRoot:
       process.env.CODEX_SESSIONS_ROOT ?? join(homedir(), '.codex', 'sessions'),
     databasePath: resolveDatabasePath(projectRoot),

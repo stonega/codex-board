@@ -4,7 +4,11 @@
   "version": "0.1.0",
   "packageManager": "bun@1.2.19",
   "workspaces": ["apps/*", "packages/*"],
+  "bin": {
+    "codex-board": "./bin/codex-board"
+  },
   "scripts": {
+    "codex-board": "bun -e \"const { runCodexBoardCli } = await import('./bin/codex-board.ts'); process.exitCode = await runCodexBoardCli(process.argv.slice(1));\" --",
     "dev": "bun run --filter @codex-boards/backend dev & bun run --filter @codex-boards/web dev",
     "dev:backend": "bun run --filter @codex-boards/backend dev",
     "dev:web": "bun run --filter @codex-boards/web dev",

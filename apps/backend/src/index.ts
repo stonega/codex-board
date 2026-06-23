@@ -251,7 +251,7 @@ export function createAppServer(config: AppConfig = getConfig()) {
 export function serveAppServer(server = createAppServer()) {
   return Bun.serve({
     port: server.config.port,
-    fetch: server.app.fetch,
+    fetch: async (request) => server.app.fetch(request),
   });
 }
 
@@ -265,7 +265,12 @@ if (import.meta.main) {
     if (command.command === 'help') {
       console.log(getCliHelpText());
     } else if (command.command === 'serve') {
-      server = createAppServer();
+      const config = getConfig();
+      if (command.options.port !== null) {
+        config.port = command.options.port;
+      }
+
+      server = createAppServer(config);
       serveAppServer(server);
       await server.syncService.sync().catch((error) => {
         console.error('Initial sync failed', error);

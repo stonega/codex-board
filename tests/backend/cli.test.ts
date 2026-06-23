@@ -70,6 +70,15 @@ function createIssue(
 }
 
 describe('backend cli', () => {
+  test('parses serve port flags', () => {
+    expect(parseCliCommand(['serve', '--port', '7799'])).toEqual({
+      command: 'serve',
+      options: {
+        port: 7799,
+      },
+    });
+  });
+
   test('parses multica export flags', () => {
     expect(
       parseCliCommand([

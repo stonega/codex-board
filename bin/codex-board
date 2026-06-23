@@ -1,0 +1,27 @@
+#!/usr/bin/env node
+
+const { spawn } = require('node:child_process');
+const { dirname, join } = require('node:path');
+
+const scriptDir = dirname(__filename);
+const launcher = join(scriptDir, 'codex-board.ts');
+const script =
+  "const { runCodexBoardCli } = await import(process.argv[1]); process.exitCode = await runCodexBoardCli(process.argv.slice(2));";
+
+const child = spawn('bun', ['-e', script, '--', launcher, ...process.argv.slice(2)], {
+  stdio: 'inherit',
+});
+
+child.once('exit', (code, signal) => {
+  if (signal) {
+    process.kill(process.pid, signal);
+    return;
+  }
+
+  process.exitCode = code ?? 0;
+});
+
+child.once('error', (error) => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exitCode = 1;
+});

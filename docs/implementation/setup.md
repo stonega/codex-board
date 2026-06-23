@@ -13,6 +13,17 @@ bun install
 
 ## Run locally
 
+Recommended browser workflow:
+
+```bash
+bun run codex-board
+```
+
+The `codex-board` CLI starts the backend API and Vite web app locally, waits
+for both to become reachable, then opens the web UI. Use the web UI's sync
+action to refresh local Codex session data. Use `--no-open` when you want to
+start the servers without launching a browser.
+
 Backend:
 
 ```bash
