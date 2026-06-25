@@ -97,12 +97,12 @@ function formatLabel(value: string): string {
 }
 
 const TAG_BADGE_CLASSES = [
-  'border-sky-200 bg-sky-50 text-sky-700',
-  'border-emerald-200 bg-emerald-50 text-emerald-700',
-  'border-amber-200 bg-amber-50 text-amber-700',
-  'border-rose-200 bg-rose-50 text-rose-700',
-  'border-violet-200 bg-violet-50 text-violet-700',
-  'border-cyan-200 bg-cyan-50 text-cyan-700',
+  'border border-sky-200 bg-sky-50 text-sky-700',
+  'border border-emerald-200 bg-emerald-50 text-emerald-700',
+  'border border-amber-200 bg-amber-50 text-amber-700',
+  'border border-rose-200 bg-rose-50 text-rose-700',
+  'border border-violet-200 bg-violet-50 text-violet-700',
+  'border border-cyan-200 bg-cyan-50 text-cyan-700',
 ] as const;
 
 function getTagBadgeClass(tag: string): string {
@@ -260,7 +260,11 @@ function DetailSheet({
                   </p>
                   <div className="flex flex-wrap gap-1">
                     {issue.tags.length > 0 ? (
-                      issue.tags.map((tag) => <Badge key={tag}>{tag}</Badge>)
+                      issue.tags.map((tag) => (
+                        <Badge className={getTagBadgeClass(tag)} key={tag}>
+                          {tag}
+                        </Badge>
+                      ))
                     ) : (
                       <p className="text-sm text-notion-muted">No tags</p>
                     )}
@@ -372,9 +376,9 @@ function ProjectTabBar({
     label: string;
     icon: typeof ListTodo;
   }> = [
-    { id: 'issues', label: 'Issues', icon: ListTodo },
-    { id: 'skills', label: 'Skills', icon: Sparkles },
-  ];
+      { id: 'issues', label: 'Issues', icon: ListTodo },
+      { id: 'skills', label: 'Skills', icon: Sparkles },
+    ];
 
   return (
     <div
@@ -395,7 +399,7 @@ function ProjectTabBar({
             role="tab"
             type="button"
           >
-            <Icon size={15} />
+            <Icon size={13} />
             <span>{tab.label}</span>
           </button>
         );
@@ -434,66 +438,53 @@ function SkillRecommendationList({
       ) : recommendations.length === 0 ? (
         <TableEmpty>No skill recommendations matched this project.</TableEmpty>
       ) : (
-        <TableWrapper>
-          <Table className="min-w-[820px]">
-            <thead>
-              <tr className="border-b border-notion-border">
-                <th className="w-full min-w-64 py-2 px-3 text-left text-sm font-medium text-notion-muted whitespace-nowrap">
-                  Skill
-                </th>
-                <th className="w-[1%] py-2 px-3 text-left text-sm font-medium text-notion-muted whitespace-nowrap">
-                  Match
-                </th>
-                <th className="min-w-72 py-2 px-3 text-left text-sm font-medium text-notion-muted whitespace-nowrap">
-                  Signals
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {recommendations.map((recommendation) => (
-                <tr
-                  className="group border-b border-notion-border hover:bg-notion-hover"
-                  key={recommendation.skill.id}
-                >
-                  <td className="w-full py-2 px-3 align-top">
-                    <button
-                      className="w-full text-left focus:outline-none"
-                      onClick={() => onOpen(recommendation)}
-                      type="button"
-                    >
-                      <strong className="block text-sm font-medium text-notion-text">
-                        {recommendation.skill.name}
-                      </strong>
-                      <span className="mt-0.5 block text-[0.75rem] text-notion-muted">
-                        {recommendation.skill.sourceLabel}
-                      </span>
-                    </button>
-                  </td>
-                  <td className="py-2 px-3 align-top whitespace-nowrap">
-                    <div className="flex flex-col gap-1">
-                      <Badge>{recommendation.score}%</Badge>
-                      <span className="text-[0.75rem] text-notion-muted">
-                        {recommendation.matchedIssueCount} issues
-                      </span>
-                    </div>
-                  </td>
-                  <td className="min-w-72 py-2 px-3 align-top">
-                    <p className="mb-2 text-sm leading-relaxed text-notion-muted">
-                      {recommendation.reasons[0]}
-                    </p>
-                    <div className="flex flex-wrap gap-1">
-                      {recommendation.matchedTerms.slice(0, 5).map((term) => (
-                        <Badge className={getTagBadgeClass(term)} key={term}>
-                          {term}
-                        </Badge>
-                      ))}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </Table>
-        </TableWrapper>
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 2xl:grid-cols-3">
+          {recommendations.map((recommendation) => (
+            <button
+              className="group flex min-h-44 w-full min-w-0 flex-col rounded-lg border border-notion-border bg-white p-4 text-left shadow-[0_1px_2px_rgba(15,15,15,0.03)] transition-colors hover:border-notion-muted/30 hover:bg-notion-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-notion-blue focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+              key={recommendation.skill.id}
+              onClick={() => onOpen(recommendation)}
+              type="button"
+            >
+              <div className="mb-3 flex min-w-0 flex-col items-start gap-2">
+                <div className="min-w-0 max-w-full">
+                  <strong className="block break-words text-sm font-semibold leading-snug text-notion-text">
+                    {recommendation.skill.name}
+                  </strong>
+                  <span className="mt-1 block truncate text-[0.75rem] text-notion-muted">
+                    {recommendation.skill.relativePath}
+                  </span>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <Badge>{recommendation.skill.sourceLabel}</Badge>
+                  <Badge>{recommendation.score}% match</Badge>
+                  <span className="text-[0.75rem] text-notion-muted">
+                    {recommendation.matchedIssueCount} issues
+                  </span>
+                </div>
+              </div>
+
+              <p className="line-clamp-3 text-sm leading-relaxed text-notion-muted">
+                {recommendation.reasons[0]}
+              </p>
+
+              {recommendation.matchedTerms.length > 0 ? (
+                <div className="mt-3 flex flex-wrap gap-1">
+                  {recommendation.matchedTerms.slice(0, 5).map((term) => (
+                    <Badge className={getTagBadgeClass(term)} key={term}>
+                      {term}
+                    </Badge>
+                  ))}
+                </div>
+              ) : null}
+
+              <span className="mt-auto flex items-center gap-1.5 pt-4 text-[0.75rem] font-medium text-notion-muted transition-colors group-hover:text-notion-text">
+                <BookOpen size={14} />
+                Open skill
+              </span>
+            </button>
+          ))}
+        </div>
       )}
     </section>
   );
@@ -1327,8 +1318,8 @@ function BoardPage() {
 
   const parserReady = Boolean(
     settingsResponse?.parser.baseUrl &&
-      settingsResponse?.parser.model &&
-      settingsResponse?.parser.apiKeyConfigured,
+    settingsResponse?.parser.model &&
+    settingsResponse?.parser.apiKeyConfigured,
   );
 
   function applyParserPreset(preset: keyof typeof PARSER_PRESETS) {
@@ -1415,7 +1406,7 @@ function BoardPage() {
           </div>
 
           <div className="flex-1 overflow-y-auto">
-            <div className="px-2.5 pb-2 grid gap-[1px]">
+            <div className="px-2.5 py-2 grid gap-[1px]">
               <button
                 className={`w-full flex items-center gap-2 rounded-md p-1.5 text-[0.875rem] transition-colors ${mainView === 'skills' ? 'bg-notion-active' : 'hover:bg-notion-hover'} ${showSidebarLabels ? 'text-left' : 'justify-center'}`}
                 onClick={openGlobalSkills}
@@ -1423,7 +1414,9 @@ function BoardPage() {
                 title="Skills"
               >
                 <div
-                  className={`w-6 h-6 flex items-center justify-center rounded-full font-semibold text-[0.875rem] shrink-0 ${mainView === 'skills' ? 'bg-notion-blue text-white' : 'bg-notion-active text-notion-muted'}`}
+                  className={
+                    'w-6 h-6 flex items-center justify-center rounded-full font-semibold text-[0.875rem] shrink-0 bg-notion-active text-notion-muted'
+                  }
                 >
                   <Sparkles size={14} />
                 </div>
