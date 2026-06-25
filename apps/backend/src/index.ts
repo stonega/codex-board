@@ -22,6 +22,7 @@ import {
   updateParserSettings,
 } from './config';
 import { BoardsDatabase } from './db';
+import { getSkillDetail, listSkillRecommendations, listSkills } from './skills';
 import { SyncService } from './sync-service';
 
 export function createAppServer(config: AppConfig = getConfig()) {
@@ -63,6 +64,46 @@ export function createAppServer(config: AppConfig = getConfig()) {
 
   app.get('/api/projects', (context) => {
     return context.json(database.listProjects());
+  });
+
+  app.get('/api/skills', (context) => {
+    return context.json(
+      listSkills({
+        config,
+        database,
+        projectId: context.req.query().projectId ?? null,
+      }),
+    );
+  });
+
+  app.get('/api/skills/recommendations', (context) => {
+    const projectId = context.req.query().projectId ?? null;
+    if (!projectId) {
+      return context.json({ message: 'projectId is required' }, 400);
+    }
+
+    return context.json(
+      listSkillRecommendations({
+        config,
+        database,
+        projectId,
+      }),
+    );
+  });
+
+  app.get('/api/skills/:id', (context) => {
+    const response = getSkillDetail({
+      config,
+      database,
+      projectId: context.req.query().projectId ?? null,
+      skillId: context.req.param('id'),
+    });
+
+    if (!response.skill) {
+      return context.json(response, 404);
+    }
+
+    return context.json(response);
   });
 
   app.get('/api/settings', (context) => {

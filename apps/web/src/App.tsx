@@ -1,5 +1,6 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import {
+  BookOpen,
   Check,
   ChevronRight,
   Database,
@@ -17,6 +18,7 @@ import {
   Search,
   Send,
   Settings,
+  Sparkles,
   Tags,
   X,
 } from 'lucide-react';
@@ -34,6 +36,12 @@ import type {
   ProjectListResponse,
   SavedViewListResponse,
   SettingsResponse,
+  SkillDetail,
+  SkillDetailResponse,
+  SkillListResponse,
+  SkillRecommendation,
+  SkillRecommendationListResponse,
+  SkillSummary,
   SyncDiagnostics,
   SyncResponse,
   UpdateSettingsPayload,
@@ -75,6 +83,12 @@ const PARSER_PRESETS = {
     model: 'openai/gpt-4.1-mini',
   },
 } as const;
+
+type MainView = 'project' | 'skills';
+type ProjectTab = 'issues' | 'skills';
+
+const SIDEBAR_EXPANDED_WIDTH = 240;
+const SIDEBAR_COLLAPSED_WIDTH = 64;
 
 function formatLabel(value: string): string {
   return value
@@ -338,6 +352,267 @@ function DetailSheet({
                   No sub issues extracted for this thread.
                 </p>
               )}
+            </div>
+          </section>
+        </div>
+      ) : null}
+    </Sheet>
+  );
+}
+
+function ProjectTabBar({
+  active,
+  onChange,
+}: {
+  active: ProjectTab;
+  onChange: (tab: ProjectTab) => void;
+}) {
+  const tabs: Array<{
+    id: ProjectTab;
+    label: string;
+    icon: typeof ListTodo;
+  }> = [
+    { id: 'issues', label: 'Issues', icon: ListTodo },
+    { id: 'skills', label: 'Skills', icon: Sparkles },
+  ];
+
+  return (
+    <div
+      aria-label="Project sections"
+      className="project-tab-bar"
+      role="tablist"
+    >
+      {tabs.map((tab) => {
+        const Icon = tab.icon;
+        const selected = active === tab.id;
+
+        return (
+          <button
+            aria-selected={selected}
+            className={`project-tab-button ${selected ? 'project-tab-button-active' : ''}`}
+            key={tab.id}
+            onClick={() => onChange(tab.id)}
+            role="tab"
+            type="button"
+          >
+            <Icon size={15} />
+            <span>{tab.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function SkillRecommendationList({
+  recommendations,
+  issueCount,
+  loading,
+  onOpen,
+}: {
+  recommendations: SkillRecommendation[];
+  issueCount: number;
+  loading: boolean;
+  onOpen: (recommendation: SkillRecommendation) => void;
+}) {
+  return (
+    <section className="mb-8 grid gap-3">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div className="min-w-0">
+          <p className="mb-1 text-[0.75rem] font-semibold uppercase tracking-wider text-notion-muted">
+            Auto Skill Found
+          </p>
+          <h3 className="text-lg font-semibold tracking-tight text-notion-text">
+            Recommended skills
+          </h3>
+        </div>
+        <Badge>{issueCount} issues scanned</Badge>
+      </div>
+
+      {loading ? (
+        <TableEmpty>Finding skill recommendations...</TableEmpty>
+      ) : recommendations.length === 0 ? (
+        <TableEmpty>No skill recommendations matched this project.</TableEmpty>
+      ) : (
+        <TableWrapper>
+          <Table className="min-w-[820px]">
+            <thead>
+              <tr className="border-b border-notion-border">
+                <th className="w-full min-w-64 py-2 px-3 text-left text-sm font-medium text-notion-muted whitespace-nowrap">
+                  Skill
+                </th>
+                <th className="w-[1%] py-2 px-3 text-left text-sm font-medium text-notion-muted whitespace-nowrap">
+                  Match
+                </th>
+                <th className="min-w-72 py-2 px-3 text-left text-sm font-medium text-notion-muted whitespace-nowrap">
+                  Signals
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {recommendations.map((recommendation) => (
+                <tr
+                  className="group border-b border-notion-border hover:bg-notion-hover"
+                  key={recommendation.skill.id}
+                >
+                  <td className="w-full py-2 px-3 align-top">
+                    <button
+                      className="w-full text-left focus:outline-none"
+                      onClick={() => onOpen(recommendation)}
+                      type="button"
+                    >
+                      <strong className="block text-sm font-medium text-notion-text">
+                        {recommendation.skill.name}
+                      </strong>
+                      <span className="mt-0.5 block text-[0.75rem] text-notion-muted">
+                        {recommendation.skill.sourceLabel}
+                      </span>
+                    </button>
+                  </td>
+                  <td className="py-2 px-3 align-top whitespace-nowrap">
+                    <div className="flex flex-col gap-1">
+                      <Badge>{recommendation.score}%</Badge>
+                      <span className="text-[0.75rem] text-notion-muted">
+                        {recommendation.matchedIssueCount} issues
+                      </span>
+                    </div>
+                  </td>
+                  <td className="min-w-72 py-2 px-3 align-top">
+                    <p className="mb-2 text-sm leading-relaxed text-notion-muted">
+                      {recommendation.reasons[0]}
+                    </p>
+                    <div className="flex flex-wrap gap-1">
+                      {recommendation.matchedTerms.slice(0, 5).map((term) => (
+                        <Badge className={getTagBadgeClass(term)} key={term}>
+                          {term}
+                        </Badge>
+                      ))}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        </TableWrapper>
+      )}
+    </section>
+  );
+}
+
+function SkillList({
+  skills,
+  loading,
+  emptyMessage,
+  onOpen,
+}: {
+  skills: SkillSummary[];
+  loading: boolean;
+  emptyMessage: string;
+  onOpen: (skillId: string) => void;
+}) {
+  if (loading) {
+    return <TableEmpty>Loading skills...</TableEmpty>;
+  }
+
+  if (skills.length === 0) {
+    return <TableEmpty>{emptyMessage}</TableEmpty>;
+  }
+
+  return (
+    <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 2xl:grid-cols-3">
+      {skills.map((skill) => (
+        <button
+          className="group flex min-h-40 w-full min-w-0 flex-col rounded-lg border border-notion-border bg-white p-4 text-left shadow-[0_1px_2px_rgba(15,15,15,0.03)] transition-colors hover:border-notion-muted/30 hover:bg-notion-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-notion-blue focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+          key={skill.id}
+          onClick={() => onOpen(skill.id)}
+          type="button"
+        >
+          <div className="mb-3 flex min-w-0 flex-col items-start gap-2">
+            <div className="min-w-0 max-w-full">
+              <strong className="block break-words text-sm font-semibold leading-snug text-notion-text">
+                {skill.name}
+              </strong>
+              <span className="mt-1 block truncate text-[0.75rem] text-notion-muted">
+                {skill.relativePath}
+              </span>
+            </div>
+            <Badge>{skill.sourceLabel}</Badge>
+          </div>
+
+          <p className="line-clamp-4 text-sm leading-relaxed text-notion-muted">
+            {skill.description || 'No description provided.'}
+          </p>
+
+          <span className="mt-auto flex items-center gap-1.5 pt-4 text-[0.75rem] font-medium text-notion-muted transition-colors group-hover:text-notion-text">
+            <BookOpen size={14} />
+            Open skill
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function SkillDetailSheet({
+  skill,
+  onClose,
+}: {
+  skill: SkillDetail | null;
+  onClose: () => void;
+}) {
+  return (
+    <Sheet
+      open={Boolean(skill)}
+      onClose={onClose}
+      title={skill?.name ?? 'Skill details'}
+    >
+      {skill ? (
+        <div className="grid gap-6">
+          <header className="mb-4 flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <p className="mb-2 text-[0.75rem] font-medium uppercase tracking-wider text-notion-muted">
+                {skill.sourceLabel}
+              </p>
+              <h2 className="break-words text-3xl font-bold tracking-tight">
+                {skill.name}
+              </h2>
+              {skill.description ? (
+                <p className="mt-3 max-w-2xl text-sm leading-relaxed text-notion-muted">
+                  {skill.description}
+                </p>
+              ) : null}
+            </div>
+            <Button onClick={onClose} variant="ghost" size="sm">
+              <X size={16} />
+            </Button>
+          </header>
+
+          <section className="grid gap-6 pb-12">
+            <div className="grid gap-4 border-t border-notion-border pt-4 sm:grid-cols-2">
+              <div>
+                <p className="mb-2 text-[0.75rem] font-medium uppercase tracking-wider text-notion-muted">
+                  Source
+                </p>
+                <Badge>{skill.sourceLabel}</Badge>
+              </div>
+              <div>
+                <p className="mb-2 text-[0.75rem] font-medium uppercase tracking-wider text-notion-muted">
+                  File
+                </p>
+                <p className="break-all text-sm text-notion-muted">
+                  {skill.path}
+                </p>
+              </div>
+            </div>
+
+            <div className="border-t border-notion-border pt-4">
+              <p className="mb-2 flex items-center gap-2 text-[0.75rem] font-medium uppercase tracking-wider text-notion-muted">
+                <BookOpen size={14} />
+                Full content
+              </p>
+              <pre className="rounded border border-notion-border bg-[#f7f7f5] p-4 font-mono text-[0.81rem] leading-relaxed whitespace-pre-wrap break-words">
+                {skill.content}
+              </pre>
             </div>
           </section>
         </div>
@@ -656,15 +931,34 @@ function BoardPage() {
     useState<SettingsResponse | null>(null);
   const [issuesResponse, setIssuesResponse] =
     useState<IssueListResponse | null>(null);
+  const [globalSkillsResponse, setGlobalSkillsResponse] =
+    useState<SkillListResponse | null>(null);
+  const [projectSkillsResponse, setProjectSkillsResponse] =
+    useState<SkillListResponse | null>(null);
+  const [skillRecommendationsResponse, setSkillRecommendationsResponse] =
+    useState<SkillRecommendationListResponse | null>(null);
   const [selectedIssue, setSelectedIssue] = useState<ParsedIssue | null>(null);
+  const [selectedSkill, setSelectedSkill] = useState<SkillDetail | null>(null);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
     null,
   );
+  const [mainView, setMainView] = useState<MainView>('project');
+  const [projectTab, setProjectTab] = useState<ProjectTab>('issues');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarLabelsVisible, setSidebarLabelsVisible] = useState(true);
+  const [smallViewport, setSmallViewport] = useState(() =>
+    typeof window === 'undefined'
+      ? false
+      : window.matchMedia('(max-width: 639px)').matches,
+  );
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [loadingIssues, setLoadingIssues] = useState(false);
+  const [loadingGlobalSkills, setLoadingGlobalSkills] = useState(false);
+  const [loadingProjectSkills, setLoadingProjectSkills] = useState(false);
+  const [loadingSkillRecommendations, setLoadingSkillRecommendations] =
+    useState(false);
   const [loadingSettings, setLoadingSettings] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
   const [runningSync, setRunningSync] = useState(false);
@@ -727,6 +1021,16 @@ function BoardPage() {
   }, []);
 
   useEffect(() => {
+    const media = window.matchMedia('(max-width: 639px)');
+    const syncViewport = () => setSmallViewport(media.matches);
+
+    syncViewport();
+    media.addEventListener('change', syncViewport);
+
+    return () => media.removeEventListener('change', syncViewport);
+  }, []);
+
+  useEffect(() => {
     if (!selectedProjectId) {
       setIssuesResponse(null);
       return;
@@ -763,6 +1067,93 @@ function BoardPage() {
     };
   }, [selectedProjectId, filters]);
 
+  useEffect(() => {
+    if (mainView !== 'skills') {
+      return;
+    }
+
+    let mounted = true;
+    setLoadingGlobalSkills(true);
+    setError(null);
+
+    void fetchJson<SkillListResponse>('/skills')
+      .then((payload) => {
+        if (!mounted) {
+          return;
+        }
+        startTransition(() => {
+          setGlobalSkillsResponse(payload);
+        });
+      })
+      .catch((loadError) => {
+        if (mounted) {
+          setError(
+            loadError instanceof Error ? loadError.message : 'Unknown error',
+          );
+        }
+      })
+      .finally(() => {
+        if (mounted) {
+          setLoadingGlobalSkills(false);
+        }
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, [mainView]);
+
+  useEffect(() => {
+    if (
+      !selectedProjectId ||
+      mainView !== 'project' ||
+      projectTab !== 'skills'
+    ) {
+      setProjectSkillsResponse(null);
+      setSkillRecommendationsResponse(null);
+      return;
+    }
+
+    let mounted = true;
+    setLoadingProjectSkills(true);
+    setLoadingSkillRecommendations(true);
+    setError(null);
+    const projectQuery = encodeURIComponent(selectedProjectId);
+
+    void Promise.all([
+      fetchJson<SkillListResponse>(`/skills?projectId=${projectQuery}`),
+      fetchJson<SkillRecommendationListResponse>(
+        `/skills/recommendations?projectId=${projectQuery}`,
+      ),
+    ])
+      .then(([skillsPayload, recommendationsPayload]) => {
+        if (!mounted) {
+          return;
+        }
+        startTransition(() => {
+          setProjectSkillsResponse(skillsPayload);
+          setSkillRecommendationsResponse(recommendationsPayload);
+        });
+      })
+      .catch((loadError) => {
+        if (mounted) {
+          setError(
+            loadError instanceof Error ? loadError.message : 'Unknown error',
+          );
+        }
+      })
+      .finally(() => {
+        if (mounted) {
+          setLoadingProjectSkills(false);
+          setLoadingSkillRecommendations(false);
+        }
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, [selectedProjectId, mainView, projectTab]);
+
   const selectedProject = useMemo(
     () =>
       projectsResponse?.projects.find(
@@ -774,6 +1165,42 @@ function BoardPage() {
   async function openIssue(issueId: string) {
     const response = await fetchJson<IssueDetailResponse>(`/issues/${issueId}`);
     setSelectedIssue(response.issue);
+  }
+
+  function selectProject(projectId: string) {
+    setMainView('project');
+    setSelectedProjectId(projectId);
+  }
+
+  function openGlobalSkills() {
+    setMainView('skills');
+    setError(null);
+    setExportMessage(null);
+  }
+
+  const sidebarVisuallyCollapsed = sidebarCollapsed || smallViewport;
+  const showSidebarLabels =
+    !sidebarVisuallyCollapsed || (sidebarLabelsVisible && !smallViewport);
+
+  function toggleSidebar() {
+    setSidebarLabelsVisible(true);
+    setSidebarCollapsed((current) => !current);
+  }
+
+  async function openSkill(skillId: string, scopedProjectId?: string | null) {
+    const projectQuery = scopedProjectId
+      ? `?projectId=${encodeURIComponent(scopedProjectId)}`
+      : '';
+    try {
+      const response = await fetchJson<SkillDetailResponse>(
+        `/skills/${encodeURIComponent(skillId)}${projectQuery}`,
+      );
+      setSelectedSkill(response.skill);
+    } catch (loadError) {
+      setError(
+        loadError instanceof Error ? loadError.message : 'Unknown error',
+      );
+    }
   }
 
   async function runSync() {
@@ -952,8 +1379,19 @@ function BoardPage() {
     <main className="h-screen w-screen overflow-hidden flex">
       <section className="flex w-full h-full overflow-hidden">
         <motion.aside
-          className={`bg-notion-sidebar border-r border-notion-border flex flex-col py-3 shrink-0 h-full ${sidebarCollapsed ? 'w-16' : 'w-60'}`}
-          layout
+          animate={{
+            width: sidebarVisuallyCollapsed
+              ? SIDEBAR_COLLAPSED_WIDTH
+              : SIDEBAR_EXPANDED_WIDTH,
+          }}
+          aria-expanded={!sidebarVisuallyCollapsed}
+          className="bg-notion-sidebar border-r border-notion-border flex flex-col py-3 shrink-0 h-full overflow-hidden"
+          initial={false}
+          onAnimationComplete={() => {
+            if (sidebarVisuallyCollapsed) {
+              setSidebarLabelsVisible(false);
+            }
+          }}
           transition={{ duration: 0.2, ease: 'easeOut' }}
         >
           <div className="px-3.5 pb-3 flex justify-between items-center shrink-0">
@@ -961,24 +1399,45 @@ function BoardPage() {
               <div className="w-5 h-5 flex items-center justify-center bg-black/5 rounded text-[0.75rem] font-medium text-notion-muted shrink-0">
                 S
               </div>
-              {!sidebarCollapsed && (
-                <h1 className="text-[0.875rem] font-semibold text-notion-text truncate">
+              {showSidebarLabels && (
+                <h1 className="w-[132px] shrink-0 truncate text-[0.875rem] font-semibold text-notion-text">
                   Stone
                 </h1>
               )}
             </div>
-            <Button
-              onClick={() => setSidebarCollapsed((current) => !current)}
-              size="sm"
-              variant="ghost"
-            >
-              <PanelLeftClose size={16} />
+            <Button onClick={toggleSidebar} size="sm" variant="ghost">
+              {sidebarVisuallyCollapsed ? (
+                <PanelLeftOpen size={16} />
+              ) : (
+                <PanelLeftClose size={16} />
+              )}
             </Button>
           </div>
 
           <div className="flex-1 overflow-y-auto">
-            {!sidebarCollapsed ? (
-              <p className="mx-3.5 mt-2 mb-1 uppercase tracking-[0.05em] text-[0.68rem] font-semibold text-notion-muted">
+            <div className="px-2.5 pb-2 grid gap-[1px]">
+              <button
+                className={`w-full flex items-center gap-2 rounded-md p-1.5 text-[0.875rem] transition-colors ${mainView === 'skills' ? 'bg-notion-active' : 'hover:bg-notion-hover'} ${showSidebarLabels ? 'text-left' : 'justify-center'}`}
+                onClick={openGlobalSkills}
+                type="button"
+                title="Skills"
+              >
+                <div
+                  className={`w-6 h-6 flex items-center justify-center rounded-full font-semibold text-[0.875rem] shrink-0 ${mainView === 'skills' ? 'bg-notion-blue text-white' : 'bg-notion-active text-notion-muted'}`}
+                >
+                  <Sparkles size={14} />
+                </div>
+                {showSidebarLabels && (
+                  <div className="w-[176px] shrink-0 overflow-hidden py-0.5">
+                    <strong className="block truncate font-medium leading-tight">
+                      Skills
+                    </strong>
+                  </div>
+                )}
+              </button>
+            </div>
+            {showSidebarLabels ? (
+              <p className="mx-3.5 mt-2 mb-1 w-[176px] overflow-hidden whitespace-nowrap uppercase tracking-[0.05em] text-[0.68rem] font-semibold text-notion-muted">
                 Workspace
               </p>
             ) : (
@@ -987,20 +1446,20 @@ function BoardPage() {
             <div className="px-2.5 grid gap-[1px]">
               {projectsResponse?.projects.map((project) => (
                 <button
-                  className={`w-full flex items-center gap-2 rounded-md p-1.5 text-[0.875rem] transition-colors text-left ${project.id === selectedProjectId ? 'bg-notion-active' : 'hover:bg-notion-hover'}`}
+                  className={`w-full flex items-center gap-2 rounded-md p-1.5 text-[0.875rem] transition-colors ${showSidebarLabels ? 'text-left' : 'justify-center'} ${mainView === 'project' && project.id === selectedProjectId ? 'bg-notion-active' : 'hover:bg-notion-hover'}`}
                   key={project.id}
-                  onClick={() => setSelectedProjectId(project.id)}
+                  onClick={() => selectProject(project.id)}
                   type="button"
                   title={project.name}
                 >
                   <div
-                    className={`w-6 h-6 flex items-center justify-center rounded-full font-semibold text-[0.875rem] shrink-0 ${project.id === selectedProjectId ? 'bg-notion-blue text-white' : 'bg-notion-active text-notion-muted'}`}
+                    className={`w-6 h-6 flex items-center justify-center rounded-full font-semibold text-[0.875rem] shrink-0 ${mainView === 'project' && project.id === selectedProjectId ? 'bg-notion-blue text-white' : 'bg-notion-active text-notion-muted'}`}
                   >
                     {project.name.charAt(0).toUpperCase()}
                   </div>
-                  {!sidebarCollapsed && (
-                    <div className="flex-1 min-w-0 py-0.5">
-                      <strong className="font-medium block break-words leading-tight">
+                  {showSidebarLabels && (
+                    <div className="w-[176px] shrink-0 overflow-hidden py-0.5">
+                      <strong className="block truncate font-medium leading-tight">
                         {project.name}
                       </strong>
                     </div>
@@ -1012,7 +1471,7 @@ function BoardPage() {
 
           <div className="px-2.5 pt-3 grid gap-[1px] border-t border-notion-border/50 shrink-0">
             <button
-              className={`w-full flex items-center gap-2 rounded-md p-1.5 text-[0.875rem] transition-colors ${runningSync ? 'cursor-wait text-notion-muted' : 'hover:bg-notion-hover'} ${sidebarCollapsed ? 'justify-center' : 'text-left'}`}
+              className={`w-full flex items-center gap-2 rounded-md p-1.5 text-[0.875rem] transition-colors ${runningSync ? 'cursor-wait text-notion-muted' : 'hover:bg-notion-hover'} ${showSidebarLabels ? 'text-left' : 'justify-center'}`}
               type="button"
               onClick={() => void runSync()}
               title={runningSync ? 'Syncing' : 'Run Sync'}
@@ -1022,15 +1481,24 @@ function BoardPage() {
                 size={16}
                 className={runningSync ? 'animate-spin' : undefined}
               />
-              {!sidebarCollapsed && (runningSync ? 'Syncing…' : 'Run Sync')}
+              {showSidebarLabels && (
+                <span className="w-[176px] shrink-0 overflow-hidden truncate text-left">
+                  {runningSync ? 'Syncing…' : 'Run Sync'}
+                </span>
+              )}
             </button>
             <button
-              className={`w-full flex items-center gap-2 rounded-md p-1.5 text-[0.875rem] hover:bg-notion-hover transition-colors ${sidebarCollapsed ? 'justify-center' : 'text-left'}`}
+              className={`w-full flex items-center gap-2 rounded-md p-1.5 text-[0.875rem] hover:bg-notion-hover transition-colors ${showSidebarLabels ? 'text-left' : 'justify-center'}`}
               type="button"
               title="Settings"
               onClick={() => void openSettings()}
             >
-              <Settings size={16} /> {!sidebarCollapsed && 'Settings'}
+              <Settings size={16} />
+              {showSidebarLabels && (
+                <span className="w-[176px] shrink-0 overflow-hidden truncate text-left">
+                  Settings
+                </span>
+              )}
             </button>
           </div>
         </motion.aside>
@@ -1038,236 +1506,341 @@ function BoardPage() {
         <section className="flex-1 min-w-0 bg-white flex flex-col h-full">
           <header className="px-12 py-3 flex justify-between items-center border-b border-notion-border shrink-0">
             <div className="flex items-center gap-2 text-[0.875rem]">
-              <span className="text-notion-muted">Projects</span>
-              <ChevronRight size={14} className="text-notion-border-strong" />
-              <span className="font-medium">
-                {selectedProject?.name ?? 'Select project'}
-              </span>
+              {mainView === 'skills' ? (
+                <span className="font-medium">Skills</span>
+              ) : (
+                <>
+                  <span className="text-notion-muted">Projects</span>
+                  <ChevronRight
+                    size={14}
+                    className="text-notion-border-strong"
+                  />
+                  <span className="font-medium">
+                    {selectedProject?.name ?? 'Select project'}
+                  </span>
+                </>
+              )}
             </div>
           </header>
 
           <div className="flex-1 overflow-y-auto">
-            <div className="px-12 pt-8 pb-3 flex items-center gap-3">
-              <div className="w-10 h-10 flex items-center justify-center bg-notion-active text-notion-muted rounded-full font-semibold text-xl shrink-0">
-                {selectedProject?.name.charAt(0) ?? 'P'}
-              </div>
-              <h2 className="text-4xl font-bold tracking-tight">
-                {selectedProject?.name ?? 'Select a project'}
-              </h2>
-            </div>
+            {mainView === 'skills' ? (
+              <>
+                <div className="px-4 pt-6 pb-3 flex items-start gap-3 sm:px-8 sm:pt-8 lg:px-12">
+                  <div className="w-10 h-10 flex items-center justify-center bg-notion-active text-notion-muted rounded-full font-semibold text-xl shrink-0">
+                    <Sparkles size={20} />
+                  </div>
+                  <div className="min-w-0">
+                    <h2 className="text-3xl font-bold tracking-tight sm:text-4xl">
+                      Skills
+                    </h2>
+                    <p className="mt-2 text-sm text-notion-muted">
+                      Global Codex, agent, and enabled plugin skills.
+                    </p>
+                  </div>
+                </div>
 
-            <div className="px-12 py-1 flex items-center justify-end border-b border-notion-border overflow-x-auto sticky top-0 bg-white z-10">
-              <div className="flex items-center gap-2">
-                <div className="flex items-center bg-notion-hover rounded px-2">
-                  <Search size={14} className="text-notion-muted" />
-                  <Input
-                    onChange={(event) =>
-                      setFilters((current) => ({
-                        ...current,
-                        query: event.target.value,
-                      }))
-                    }
-                    placeholder="Search"
-                    value={filters.query ?? ''}
-                    className="w-32 text-[0.81rem] h-7 bg-transparent border-none outline-none focus:bg-transparent"
+                {error ? (
+                  <p className="mx-4 mb-3 bg-red-50 border border-red-100 p-3 rounded text-sm text-red-800 sm:mx-8 lg:mx-12">
+                    {error}
+                  </p>
+                ) : null}
+
+                <div className="px-4 py-3 pb-12 sm:px-8 lg:px-12">
+                  <SkillList
+                    emptyMessage="No global skills were found."
+                    loading={loadingGlobalSkills}
+                    onOpen={(skillId) => void openSkill(skillId)}
+                    skills={globalSkillsResponse?.skills ?? []}
                   />
                 </div>
-                <Button variant="ghost" size="sm">
-                  <Filter size={14} /> Filter
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void exportProjectToMultica()}
-                  disabled={!selectedProjectId || exportingMultica}
-                >
-                  <ExternalLink size={14} />
-                  {exportingMultica ? 'Exporting…' : 'Export to Multica'}
-                </Button>
-                <Button variant="default" size="sm">
-                  <Plus size={14} /> New
-                </Button>
-              </div>
-            </div>
+              </>
+            ) : (
+              <>
+                <div className="px-12 pt-8 pb-3 flex items-center gap-3">
+                  <div className="w-10 h-10 flex items-center justify-center bg-notion-active text-notion-muted rounded-full font-semibold text-xl shrink-0">
+                    {selectedProject?.name.charAt(0) ?? 'P'}
+                  </div>
+                  <h2 className="text-4xl font-bold tracking-tight">
+                    {selectedProject?.name ?? 'Select a project'}
+                  </h2>
+                </div>
 
-            <div className="px-12 py-2 flex items-center gap-2 overflow-x-auto">
-              <Select
-                onChange={(event) =>
-                  setFilters((current) => ({
-                    ...current,
-                    status: event.target.value as IssueStatus | 'all',
-                  }))
-                }
-                value={filters.status ?? 'all'}
-                className="text-[0.81rem] h-7"
-              >
-                {STATUS_OPTIONS.map((status) => (
-                  <option key={status} value={status}>
-                    {formatLabel(status)}
-                  </option>
-                ))}
-              </Select>
-              <Select
-                onChange={(event) =>
-                  setFilters((current) => ({
-                    ...current,
-                    priority: event.target.value as IssuePriority | 'all',
-                  }))
-                }
-                value={filters.priority ?? 'all'}
-                className="text-[0.81rem] h-7"
-              >
-                {PRIORITY_OPTIONS.map((priority) => (
-                  <option key={priority} value={priority}>
-                    {formatLabel(priority)}
-                  </option>
-                ))}
-              </Select>
-              <Button
-                onClick={() =>
-                  setFilters((current) => ({
-                    ...current,
-                    needsReview: !current.needsReview,
-                  }))
-                }
-                variant="ghost"
-                size="sm"
-                className={
-                  filters.needsReview ? 'text-notion-blue' : 'text-notion-muted'
-                }
-              >
-                <ListTodo size={14} /> Review
-              </Button>
-              <Button
-                onClick={() =>
-                  setFilters((current) => ({
-                    ...current,
-                    hasCommits: !current.hasCommits,
-                  }))
-                }
-                variant="ghost"
-                size="sm"
-                className={
-                  filters.hasCommits ? 'text-notion-blue' : 'text-notion-muted'
-                }
-              >
-                <GitCommit size={14} /> Commits
-              </Button>
-              <Button
-                onClick={() =>
-                  setFilters((current) => ({
-                    ...current,
-                    hasTags: !current.hasTags,
-                  }))
-                }
-                variant="ghost"
-                size="sm"
-                className={
-                  filters.hasTags ? 'text-notion-blue' : 'text-notion-muted'
-                }
-              >
-                <Tags size={14} /> Tags
-              </Button>
-            </div>
+                <div className="px-12 pb-4">
+                  <ProjectTabBar active={projectTab} onChange={setProjectTab} />
+                </div>
 
-            {error ? (
-              <p className="mx-12 mb-3 bg-red-50 border border-red-100 p-3 rounded text-sm text-red-800">
-                {error}
-              </p>
-            ) : null}
+                {projectTab === 'issues' ? (
+                  <>
+                    <div className="px-12 py-1 flex items-center justify-end border-y border-notion-border overflow-x-auto sticky top-0 bg-white z-10">
+                      <div className="flex items-center gap-2">
+                        <div className="flex items-center bg-notion-hover rounded px-2">
+                          <Search size={14} className="text-notion-muted" />
+                          <Input
+                            onChange={(event) =>
+                              setFilters((current) => ({
+                                ...current,
+                                query: event.target.value,
+                              }))
+                            }
+                            placeholder="Search"
+                            value={filters.query ?? ''}
+                            className="w-32 text-[0.81rem] h-7 bg-transparent border-none outline-none focus:bg-transparent"
+                          />
+                        </div>
+                        <Button variant="ghost" size="sm">
+                          <Filter size={14} /> Filter
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => void exportProjectToMultica()}
+                          disabled={!selectedProjectId || exportingMultica}
+                        >
+                          <ExternalLink size={14} />
+                          {exportingMultica
+                            ? 'Exporting…'
+                            : 'Export to Multica'}
+                        </Button>
+                        <Button variant="default" size="sm">
+                          <Plus size={14} /> New
+                        </Button>
+                      </div>
+                    </div>
 
-            {exportMessage ? (
-              <p className="mx-12 mb-3 rounded border border-emerald-100 bg-emerald-50 p-3 text-sm text-emerald-800">
-                {exportMessage}
-              </p>
-            ) : null}
-
-            <div className="pb-12">
-              {loadingIssues ? (
-                <TableEmpty>Loading issues...</TableEmpty>
-              ) : issuesResponse?.issues.length ? (
-                <Table className="w-full">
-                  <thead>
-                    <tr className="border-b border-notion-border">
-                      <th className="text-left py-2 px-3 text-notion-muted font-medium text-sm whitespace-nowrap w-full">
-                        Title
-                      </th>
-                      <th className="text-left py-2 px-3 text-notion-muted font-medium text-sm whitespace-nowrap">
-                        Status
-                      </th>
-                      <th className="text-left py-2 px-3 text-notion-muted font-medium text-sm whitespace-nowrap">
-                        Priority
-                      </th>
-                      <th className="text-left py-2 px-3 text-notion-muted font-medium text-sm whitespace-nowrap">
-                        Tags
-                      </th>
-                      <th className="text-left py-2 px-3 text-notion-muted font-medium text-sm whitespace-nowrap">
-                        Sub issues
-                      </th>
-                      <th className="text-left py-2 px-3 text-notion-muted font-medium text-sm whitespace-nowrap">
-                        Commits
-                      </th>
-                      <th className="text-left py-2 px-3 text-notion-muted font-medium text-sm whitespace-nowrap">
-                        Updated
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {issuesResponse.issues.map((issue) => (
-                      <tr
-                        className="hover:bg-notion-hover group border-b border-notion-border"
-                        key={issue.id}
+                    <div className="px-12 py-2 flex items-center gap-2 overflow-x-auto">
+                      <Select
+                        onChange={(event) =>
+                          setFilters((current) => ({
+                            ...current,
+                            status: event.target.value as IssueStatus | 'all',
+                          }))
+                        }
+                        value={filters.status ?? 'all'}
+                        className="text-[0.81rem] h-7"
                       >
-                        <td className="py-2 px-3 align-top w-full">
-                          <button
-                            className="w-full text-left focus:outline-none"
-                            onClick={() => void openIssue(issue.id)}
-                            type="button"
-                          >
-                            <strong className="font-medium text-sm block">
-                              {issue.title}
-                            </strong>
-                          </button>
-                        </td>
-                        <td className="py-2 px-3 align-top">
-                          <Badge>{formatLabel(issue.status)}</Badge>
-                        </td>
-                        <td className="py-2 px-3 align-top">
-                          <Badge>{formatLabel(issue.priority)}</Badge>
-                        </td>
-                        <td className="py-2 px-3 align-top">
-                          <div className="flex flex-wrap gap-1">
-                            {issue.tags.slice(0, 3).map((tag) => (
-                              <Badge
-                                className={getTagBadgeClass(tag)}
-                                key={tag}
-                              >
-                                {tag}
-                              </Badge>
-                            ))}
-                          </div>
-                        </td>
-                        <td className="py-2 px-3 align-top text-sm">
-                          {issue.subIssueCount}
-                        </td>
-                        <td className="py-2 px-3 align-top text-sm">
-                          {issue.git.commits.length}
-                        </td>
-                        <td className="py-2 px-3 align-top text-sm text-notion-muted">
-                          {new Date(issue.updatedAt).toLocaleDateString()}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </Table>
-              ) : (
-                <TableEmpty>
-                  {selectedProjectId
-                    ? 'No issues match the current filters.'
-                    : 'Select a project to load issues.'}
-                </TableEmpty>
-              )}
-            </div>
+                        {STATUS_OPTIONS.map((status) => (
+                          <option key={status} value={status}>
+                            {formatLabel(status)}
+                          </option>
+                        ))}
+                      </Select>
+                      <Select
+                        onChange={(event) =>
+                          setFilters((current) => ({
+                            ...current,
+                            priority: event.target.value as
+                              | IssuePriority
+                              | 'all',
+                          }))
+                        }
+                        value={filters.priority ?? 'all'}
+                        className="text-[0.81rem] h-7"
+                      >
+                        {PRIORITY_OPTIONS.map((priority) => (
+                          <option key={priority} value={priority}>
+                            {formatLabel(priority)}
+                          </option>
+                        ))}
+                      </Select>
+                      <Button
+                        onClick={() =>
+                          setFilters((current) => ({
+                            ...current,
+                            needsReview: !current.needsReview,
+                          }))
+                        }
+                        variant="ghost"
+                        size="sm"
+                        className={
+                          filters.needsReview
+                            ? 'text-notion-blue'
+                            : 'text-notion-muted'
+                        }
+                      >
+                        <ListTodo size={14} /> Review
+                      </Button>
+                      <Button
+                        onClick={() =>
+                          setFilters((current) => ({
+                            ...current,
+                            hasCommits: !current.hasCommits,
+                          }))
+                        }
+                        variant="ghost"
+                        size="sm"
+                        className={
+                          filters.hasCommits
+                            ? 'text-notion-blue'
+                            : 'text-notion-muted'
+                        }
+                      >
+                        <GitCommit size={14} /> Commits
+                      </Button>
+                      <Button
+                        onClick={() =>
+                          setFilters((current) => ({
+                            ...current,
+                            hasTags: !current.hasTags,
+                          }))
+                        }
+                        variant="ghost"
+                        size="sm"
+                        className={
+                          filters.hasTags
+                            ? 'text-notion-blue'
+                            : 'text-notion-muted'
+                        }
+                      >
+                        <Tags size={14} /> Tags
+                      </Button>
+                    </div>
+                  </>
+                ) : null}
+
+                {error ? (
+                  <p className="mx-12 mb-3 bg-red-50 border border-red-100 p-3 rounded text-sm text-red-800">
+                    {error}
+                  </p>
+                ) : null}
+
+                {exportMessage ? (
+                  <p className="mx-12 mb-3 rounded border border-emerald-100 bg-emerald-50 p-3 text-sm text-emerald-800">
+                    {exportMessage}
+                  </p>
+                ) : null}
+
+                <div className="px-4 pb-12 sm:px-8 lg:px-12">
+                  {projectTab === 'skills' ? (
+                    <>
+                      <SkillRecommendationList
+                        issueCount={
+                          skillRecommendationsResponse?.issueCount ?? 0
+                        }
+                        loading={loadingSkillRecommendations}
+                        onOpen={(recommendation) =>
+                          void openSkill(
+                            recommendation.skill.id,
+                            recommendation.skill.projectId ?? null,
+                          )
+                        }
+                        recommendations={
+                          skillRecommendationsResponse?.recommendations ?? []
+                        }
+                      />
+
+                      <section className="grid gap-3">
+                        <div>
+                          <p className="mb-1 text-[0.75rem] font-semibold uppercase tracking-wider text-notion-muted">
+                            Project skills
+                          </p>
+                          <h3 className="text-lg font-semibold tracking-tight text-notion-text">
+                            Local catalog
+                          </h3>
+                        </div>
+                        <SkillList
+                          emptyMessage={
+                            selectedProjectId
+                              ? 'No project skills were found.'
+                              : 'Select a project to load skills.'
+                          }
+                          loading={loadingProjectSkills}
+                          onOpen={(skillId) =>
+                            void openSkill(skillId, selectedProjectId)
+                          }
+                          skills={projectSkillsResponse?.skills ?? []}
+                        />
+                      </section>
+                    </>
+                  ) : loadingIssues ? (
+                    <TableEmpty>Loading issues...</TableEmpty>
+                  ) : issuesResponse?.issues.length ? (
+                    <TableWrapper>
+                      <Table className="min-w-[860px]">
+                        <thead>
+                          <tr className="border-b border-notion-border">
+                            <th className="w-full min-w-72 py-2 px-3 text-left text-sm font-medium text-notion-muted whitespace-nowrap">
+                              Title
+                            </th>
+                            <th className="w-[1%] py-2 px-3 text-left text-sm font-medium text-notion-muted whitespace-nowrap">
+                              Status
+                            </th>
+                            <th className="w-[1%] py-2 px-3 text-left text-sm font-medium text-notion-muted whitespace-nowrap">
+                              Priority
+                            </th>
+                            <th className="min-w-44 py-2 px-3 text-left text-sm font-medium text-notion-muted whitespace-nowrap">
+                              Tags
+                            </th>
+                            <th className="w-[1%] py-2 px-3 text-left text-sm font-medium text-notion-muted whitespace-nowrap">
+                              Sub issues
+                            </th>
+                            <th className="w-[1%] py-2 px-3 text-left text-sm font-medium text-notion-muted whitespace-nowrap">
+                              Commits
+                            </th>
+                            <th className="w-[1%] py-2 px-3 text-left text-sm font-medium text-notion-muted whitespace-nowrap">
+                              Updated
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {issuesResponse.issues.map((issue) => (
+                            <tr
+                              className="hover:bg-notion-hover group border-b border-notion-border"
+                              key={issue.id}
+                            >
+                              <td className="w-full py-2 px-3 align-top">
+                                <button
+                                  className="w-full text-left focus:outline-none"
+                                  onClick={() => void openIssue(issue.id)}
+                                  type="button"
+                                >
+                                  <strong className="block text-sm font-medium">
+                                    {issue.title}
+                                  </strong>
+                                </button>
+                              </td>
+                              <td className="py-2 px-3 align-top whitespace-nowrap">
+                                <Badge>{formatLabel(issue.status)}</Badge>
+                              </td>
+                              <td className="py-2 px-3 align-top whitespace-nowrap">
+                                <Badge>{formatLabel(issue.priority)}</Badge>
+                              </td>
+                              <td className="min-w-44 py-2 px-3 align-top">
+                                <div className="flex flex-wrap gap-1">
+                                  {issue.tags.slice(0, 3).map((tag) => (
+                                    <Badge
+                                      className={getTagBadgeClass(tag)}
+                                      key={tag}
+                                    >
+                                      {tag}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              </td>
+                              <td className="py-2 px-3 align-top text-sm whitespace-nowrap">
+                                {issue.subIssueCount}
+                              </td>
+                              <td className="py-2 px-3 align-top text-sm whitespace-nowrap">
+                                {issue.git.commits.length}
+                              </td>
+                              <td className="py-2 px-3 align-top text-sm text-notion-muted whitespace-nowrap">
+                                {new Date(issue.updatedAt).toLocaleDateString()}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </Table>
+                    </TableWrapper>
+                  ) : (
+                    <TableEmpty>
+                      {selectedProjectId
+                        ? 'No issues match the current filters.'
+                        : 'Select a project to load issues.'}
+                    </TableEmpty>
+                  )}
+                </div>
+              </>
+            )}
           </div>
         </section>
       </section>
@@ -1276,6 +1849,10 @@ function BoardPage() {
         issue={selectedIssue}
         onClose={() => setSelectedIssue(null)}
         onReviewToggle={toggleReview}
+      />
+      <SkillDetailSheet
+        skill={selectedSkill}
+        onClose={() => setSelectedSkill(null)}
       />
       <SettingsModal
         error={settingsError}

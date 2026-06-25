@@ -5,6 +5,8 @@ export interface AppConfig {
   port: number;
   sessionsRoot: string;
   databasePath: string;
+  codexHome?: string;
+  agentsHome?: string;
   openAiBaseUrl: string | null;
   openAiApiKey: string | null;
   openAiModel: string | null;
@@ -39,6 +41,8 @@ export function getConfig(): AppConfig {
     sessionsRoot:
       process.env.CODEX_SESSIONS_ROOT ?? join(homedir(), '.codex', 'sessions'),
     databasePath: resolveDatabasePath(projectRoot),
+    codexHome: process.env.CODEX_HOME ?? join(homedir(), '.codex'),
+    agentsHome: process.env.AGENTS_HOME ?? join(homedir(), '.agents'),
     openAiBaseUrl:
       process.env.OPENAI_COMPAT_BASE_URL ?? process.env.OPENAI_BASE_URL ?? null,
     openAiApiKey:

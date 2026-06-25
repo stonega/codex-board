@@ -16,6 +16,49 @@
   --muted: rgba(55, 53, 47, 0.65);
   --hover: rgba(55, 53, 47, 0.03);
   --active: rgba(55, 53, 47, 0.06);
+  --project-tab-track: rgba(55, 53, 47, 0.06);
+  --project-tab-border: rgba(55, 53, 47, 0.08);
+  --project-tab-muted: rgba(55, 53, 47, 0.65);
+  --project-tab-text: #37352f;
+  --project-tab-active: #ffffff;
+  --project-tab-hover: rgba(55, 53, 47, 0.08);
+  --project-tab-active-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+:root[data-theme="dark"],
+[data-theme="dark"],
+.dark {
+  --project-tab-track: #171717;
+  --project-tab-border: rgba(255, 255, 255, 0.12);
+  --project-tab-muted: #ada9a1;
+  --project-tab-text: #ffffff;
+  --project-tab-active: #3a3936;
+  --project-tab-hover: rgba(255, 255, 255, 0.1);
+  --project-tab-active-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+:root[data-theme="light"],
+[data-theme="light"],
+.light {
+  --project-tab-track: rgba(55, 53, 47, 0.06);
+  --project-tab-border: rgba(55, 53, 47, 0.08);
+  --project-tab-muted: rgba(55, 53, 47, 0.65);
+  --project-tab-text: #37352f;
+  --project-tab-active: #ffffff;
+  --project-tab-hover: rgba(55, 53, 47, 0.08);
+  --project-tab-active-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --project-tab-track: #171717;
+    --project-tab-border: rgba(255, 255, 255, 0.12);
+    --project-tab-muted: #ada9a1;
+    --project-tab-text: #ffffff;
+    --project-tab-active: #3a3936;
+    --project-tab-hover: rgba(255, 255, 255, 0.1);
+    --project-tab-active-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  }
 }
 
 @theme {
@@ -65,7 +108,40 @@
 }
 
 .ui-badge {
-  @apply h-5 px-1.5 inline-flex items-center rounded bg-notion-active text-[0.75rem] font-medium text-notion-muted;
+  @apply h-5 px-1.5 inline-flex shrink-0 items-center rounded bg-notion-active text-[0.75rem] font-medium leading-none text-notion-muted whitespace-nowrap;
+}
+
+.ui-table-wrapper {
+  @apply w-full overflow-x-auto;
+}
+
+.project-tab-bar {
+  @apply inline-flex items-center gap-1 rounded-full p-1 text-[0.875rem];
+  background: var(--project-tab-track);
+  border: 1px solid var(--project-tab-border);
+  color: var(--project-tab-muted);
+}
+
+.project-tab-button {
+  @apply flex h-8 items-center gap-2 rounded-full px-3 transition-colors;
+  color: inherit;
+}
+
+.project-tab-button:hover {
+  background: var(--project-tab-hover);
+  color: var(--project-tab-text);
+}
+
+.project-tab-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.project-tab-button-active,
+.project-tab-button-active:hover {
+  background: var(--project-tab-active);
+  box-shadow: var(--project-tab-active-shadow);
+  color: var(--project-tab-text);
 }
 
 .ui-input {

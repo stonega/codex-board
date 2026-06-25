@@ -79,6 +79,9 @@ You can also inspect and update the runtime parser settings from the web app's S
 - If AI parsing is unavailable, fallback issues are still persisted and marked for review
 - Parser settings can be changed at runtime through `GET /api/settings` and `POST /api/settings`, and persisted in SQLite
 - Sync runs persist parser base URL, configured model, resolved response model(s), request counts, token totals, and parse logs in SQLite
+- Skills are exposed read-only through `GET /api/skills` and `GET /api/skills/:id`; global discovery reads `${CODEX_HOME:-~/.codex}/skills`, `${AGENTS_HOME:-~/.agents}/skills`, and enabled plugin skill roots from `${CODEX_HOME:-~/.codex}/config.toml`
+- Project skill discovery reads `.codex/skills` and `.agents/skills` under the selected project's `workspacePath`
+- Project skill recommendations are exposed through `GET /api/skills/recommendations?projectId=...`; the backend ranks existing global, plugin, agent, and project-local skills by deterministic overlap with the project's stored issue titles, summaries, tags, warnings, Git evidence, and parse payload previews
 - The desktop shell starts the backend on a local loopback port and injects that API base URL into the shared React app at runtime
 - The GNOME shell starts the same backend on a local loopback port and renders the board with native GTK/libadwaita widgets
 - Desktop builds store SQLite under the platform app data directory by setting `CODEX_BOARDS_APP_DATA_DIR`

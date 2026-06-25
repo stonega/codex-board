@@ -67,6 +67,32 @@ export interface ProjectSummary {
   lastUpdatedAt: string;
 }
 
+export type SkillSource = 'codex' | 'agent' | 'plugin' | 'project';
+
+export interface SkillSummary {
+  id: string;
+  name: string;
+  description: string;
+  source: SkillSource;
+  sourceLabel: string;
+  sourceName: string | null;
+  path: string;
+  relativePath: string;
+  projectId?: string | null;
+}
+
+export interface SkillDetail extends SkillSummary {
+  content: string;
+}
+
+export interface SkillRecommendation {
+  skill: SkillSummary;
+  score: number;
+  matchedIssueCount: number;
+  matchedTerms: string[];
+  reasons: string[];
+}
+
 export interface SyncDiagnostics {
   runId: string;
   startedAt: string;
@@ -138,6 +164,25 @@ export interface IssueListResponse {
 export interface IssueDetailResponse {
   generatedAt: string;
   issue: ParsedIssue | null;
+}
+
+export interface SkillListResponse {
+  generatedAt: string;
+  scope: 'global' | 'project';
+  project: ProjectSummary | null;
+  skills: SkillSummary[];
+}
+
+export interface SkillDetailResponse {
+  generatedAt: string;
+  skill: SkillDetail | null;
+}
+
+export interface SkillRecommendationListResponse {
+  generatedAt: string;
+  project: ProjectSummary | null;
+  issueCount: number;
+  recommendations: SkillRecommendation[];
 }
 
 export interface SavedViewListResponse {

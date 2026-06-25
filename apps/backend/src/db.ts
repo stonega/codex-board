@@ -715,6 +715,28 @@ export class BoardsDatabase {
     };
   }
 
+  listProjectIssues(projectId: string): ParsedIssue[] {
+    const rows = this.db
+      .query(
+        `
+        SELECT
+          id, thread_id as threadId, project_id as projectId, parent_issue_id as parentIssueId,
+          kind, title, status, priority, assignee, due_date as dueDate, tags_json as tagsJson,
+          summary, updated_at as updatedAt, parse_mode as parseMode, confidence,
+          needs_review as needsReview, repository, workspace_path as workspacePath, branch,
+          commits_json as commitsJson, git_tags_json as gitTagsJson, rollout_path as rolloutPath,
+          session_id as sessionId, warnings_json as warningsJson,
+          parse_payload_preview as parsePayloadPreview, sub_issue_count as subIssueCount
+        FROM issues
+        WHERE project_id = ?
+        ORDER BY updated_at DESC, title ASC
+      `,
+      )
+      .all(projectId) as Record<string, unknown>[];
+
+    return rows.map((row) => this.hydrateIssue(row));
+  }
+
   getIssue(issueId: string): IssueDetailResponse {
     const row = this.db
       .query(
