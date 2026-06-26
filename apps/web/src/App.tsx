@@ -1386,16 +1386,18 @@ function BoardPage() {
           transition={{ duration: 0.2, ease: 'easeOut' }}
         >
           <div className="px-3.5 pb-3 flex justify-between items-center shrink-0">
-            <div className="flex items-center gap-2 overflow-hidden">
-              <div className="w-5 h-5 flex items-center justify-center bg-black/5 rounded text-[0.75rem] font-medium text-notion-muted shrink-0">
-                S
+            {showSidebarLabels && (
+              <div className="flex items-center gap-2 overflow-hidden">
+                <div className="w-5 h-5 flex items-center justify-center bg-black/5 rounded text-[0.75rem] font-medium text-notion-muted shrink-0">
+                  S
+                </div>
+                {showSidebarLabels && (
+                  <h1 className="w-[132px] shrink-0 truncate text-[0.875rem] font-semibold text-notion-text">
+                    Stone
+                  </h1>
+                )}
               </div>
-              {showSidebarLabels && (
-                <h1 className="w-[132px] shrink-0 truncate text-[0.875rem] font-semibold text-notion-text">
-                  Stone
-                </h1>
-              )}
-            </div>
+            )}
             <Button onClick={toggleSidebar} size="sm" variant="ghost">
               {sidebarVisuallyCollapsed ? (
                 <PanelLeftOpen size={16} />
