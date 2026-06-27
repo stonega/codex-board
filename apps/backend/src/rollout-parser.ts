@@ -19,7 +19,7 @@ import {
   normalizeTags,
   scoreConfidence,
   shouldNeedsReview,
-} from '@codex-boards/domain';
+} from '../../../packages/domain/src/index';
 
 export interface RolloutFile {
   path: string;

@@ -82,6 +82,14 @@ Default local URLs:
 
 ## CLI
 
+Install the CLI from npm:
+
+```bash
+npm install -g codex-boards
+```
+
+The published CLI requires `bun` to be available on your `PATH`.
+
 Open the local app:
 
 ```bash

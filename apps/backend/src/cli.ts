@@ -1,6 +1,9 @@
 import { spawnSync } from 'node:child_process';
 
-import type { ExportedMulticaIssue, ParsedIssue } from '@codex-boards/domain';
+import type {
+  ExportedMulticaIssue,
+  ParsedIssue,
+} from '../../../packages/domain/src/index';
 
 import type { BoardsDatabase } from './db';
 

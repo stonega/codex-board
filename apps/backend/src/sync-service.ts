@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto';
 
-import type { SyncDiagnostics, SyncParseLogEntry } from '@codex-boards/domain';
+import type {
+  SyncDiagnostics,
+  SyncParseLogEntry,
+} from '../../../packages/domain/src/index';
 
 import type { AppConfig } from './config';
 import type { BoardsDatabase } from './db';

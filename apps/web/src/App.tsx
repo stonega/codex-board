@@ -376,9 +376,9 @@ function ProjectTabBar({
     label: string;
     icon: typeof ListTodo;
   }> = [
-      { id: 'issues', label: 'Issues', icon: ListTodo },
-      { id: 'skills', label: 'Skills', icon: Sparkles },
-    ];
+    { id: 'issues', label: 'Issues', icon: ListTodo },
+    { id: 'skills', label: 'Skills', icon: Sparkles },
+  ];
 
   return (
     <div
@@ -1318,8 +1318,8 @@ function BoardPage() {
 
   const parserReady = Boolean(
     settingsResponse?.parser.baseUrl &&
-    settingsResponse?.parser.model &&
-    settingsResponse?.parser.apiKeyConfigured,
+      settingsResponse?.parser.model &&
+      settingsResponse?.parser.apiKeyConfigured,
   );
 
   function applyParserPreset(preset: keyof typeof PARSER_PRESETS) {

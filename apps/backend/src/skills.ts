@@ -19,7 +19,7 @@ import type {
   SkillRecommendationListResponse,
   SkillSource,
   SkillSummary,
-} from '@codex-boards/domain';
+} from '../../../packages/domain/src/index';
 
 import type { AppConfig } from './config';
 import type { BoardsDatabase } from './db';

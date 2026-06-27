@@ -12,7 +12,7 @@ import type {
   SavedView,
   SavedViewListResponse,
   SyncDiagnostics,
-} from '@codex-boards/domain';
+} from '../../../packages/domain/src/index';
 
 function parseJson<T>(value: string | null): T {
   if (!value) {

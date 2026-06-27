@@ -1,12 +1,26 @@
 {
   "name": "codex-boards",
-  "private": true,
   "version": "0.1.0",
+  "description": "Local Codex session issue boards.",
   "packageManager": "bun@1.2.19",
   "workspaces": ["apps/*", "packages/*"],
   "bin": {
-    "codex-board": "./bin/codex-board"
+    "codex-board": "bin/codex-board"
   },
+  "files": [
+    "apps/backend/src",
+    "apps/backend/package.json",
+    "apps/backend/tsconfig.json",
+    "apps/web/index.html",
+    "apps/web/package.json",
+    "apps/web/src",
+    "apps/web/tsconfig.json",
+    "apps/web/vite.config.ts",
+    "bin",
+    "packages/domain/package.json",
+    "packages/domain/src",
+    "tsconfig.base.json"
+  ],
   "scripts": {
     "codex-board": "bun -e \"const { runCodexBoardCli } = await import('./bin/codex-board.ts'); process.exitCode = await runCodexBoardCli(process.argv.slice(1));\" --",
     "dev": "bun run --filter @codex-boards/backend dev & bun run --filter @codex-boards/web dev",
@@ -21,6 +35,20 @@
     "test": "bun test",
     "check": "biome check .",
     "format": "biome format --write ."
+  },
+  "dependencies": {
+    "@tailwindcss/postcss": "^4.2.2",
+    "@tauri-apps/api": "2.3.0",
+    "@vitejs/plugin-react": "^4.4.1",
+    "framer-motion": "^12.38.0",
+    "hono": "^4.7.4",
+    "lucide-react": "^1.7.0",
+    "postcss": "^8.5.8",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router": "^7.3.0",
+    "tailwindcss": "^4.2.2",
+    "vite": "^6.2.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",

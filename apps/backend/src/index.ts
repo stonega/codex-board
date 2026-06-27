@@ -1,5 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
+import { Hono } from 'hono';
+import { cors } from 'hono/cors';
+
 import {
   type ExportMulticaPayload,
   type IssueFilters,
@@ -8,9 +11,7 @@ import {
   type SettingsResponse,
   type SyncRunListResponse,
   slugify,
-} from '@codex-boards/domain';
-import { Hono } from 'hono';
-import { cors } from 'hono/cors';
+} from '../../../packages/domain/src/index';
 
 import { exportIssuesToMultica, getCliHelpText, parseCliCommand } from './cli';
 import {
