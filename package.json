@@ -1,5 +1,5 @@
 {
-  "name": "codex-boards",
+  "name": "codex-board",
   "version": "0.1.0",
   "description": "Local Codex session issue boards.",
   "packageManager": "bun@1.2.19",
