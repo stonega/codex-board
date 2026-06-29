@@ -12,6 +12,7 @@ import type {
   SavedView,
   SavedViewListResponse,
   SyncDiagnostics,
+  UsageRefreshSummary,
 } from '../../../packages/domain/src/index';
 
 function parseJson<T>(value: string | null): T {
@@ -20,6 +21,24 @@ function parseJson<T>(value: string | null): T {
   }
 
   return JSON.parse(value) as T;
+}
+
+export interface UsageEventRecord {
+  recordId: string;
+  sessionId: string;
+  threadId: string;
+  eventTimestamp: string;
+  sourceFile: string;
+  lineNumber: number;
+  model: string | null;
+  effort: string | null;
+  inputTokens: number;
+  cachedInputTokens: number;
+  uncachedInputTokens: number;
+  outputTokens: number;
+  reasoningOutputTokens: number;
+  totalTokens: number;
+  isArchived: boolean;
 }
 
 export class BoardsDatabase {
@@ -119,6 +138,27 @@ export class BoardsDatabase {
         value_json TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS usage_events (
+        record_id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        event_timestamp TEXT NOT NULL,
+        source_file TEXT NOT NULL,
+        line_number INTEGER NOT NULL,
+        model TEXT,
+        effort TEXT,
+        input_tokens INTEGER NOT NULL,
+        cached_input_tokens INTEGER NOT NULL,
+        uncached_input_tokens INTEGER NOT NULL,
+        output_tokens INTEGER NOT NULL,
+        reasoning_output_tokens INTEGER NOT NULL,
+        total_tokens INTEGER NOT NULL,
+        is_archived INTEGER NOT NULL DEFAULT 0
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_usage_events_timestamp ON usage_events(event_timestamp);
+      CREATE INDEX IF NOT EXISTS idx_usage_events_thread_id ON usage_events(thread_id);
     `);
 
     const syncRunColumns = this.db
@@ -252,6 +292,112 @@ export class BoardsDatabase {
         JSON.stringify(settings),
         new Date().toISOString(),
       );
+  }
+
+  readUsageRefresh(): UsageRefreshSummary {
+    const row = this.db
+      .query(
+        'SELECT value_json as valueJson FROM app_settings WHERE key = ? LIMIT 1',
+      )
+      .get('usage_refresh') as { valueJson: string } | null;
+
+    if (!row) {
+      return {
+        refreshedAt: null,
+        scannedFiles: 0,
+        parsedEvents: 0,
+        skippedEvents: 0,
+        includedArchived: true,
+      };
+    }
+
+    return parseJson<UsageRefreshSummary>(row.valueJson);
+  }
+
+  replaceUsageEvents(
+    events: UsageEventRecord[],
+    refresh: UsageRefreshSummary,
+  ): void {
+    this.db.transaction(() => {
+      this.db.query('DELETE FROM usage_events').run();
+
+      const insert = this.db.query(`
+        INSERT INTO usage_events (
+          record_id, session_id, thread_id, event_timestamp, source_file, line_number,
+          model, effort, input_tokens, cached_input_tokens, uncached_input_tokens,
+          output_tokens, reasoning_output_tokens, total_tokens, is_archived
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+
+      for (const event of events) {
+        insert.run(
+          event.recordId,
+          event.sessionId,
+          event.threadId,
+          event.eventTimestamp,
+          event.sourceFile,
+          event.lineNumber,
+          event.model,
+          event.effort,
+          event.inputTokens,
+          event.cachedInputTokens,
+          event.uncachedInputTokens,
+          event.outputTokens,
+          event.reasoningOutputTokens,
+          event.totalTokens,
+          event.isArchived ? 1 : 0,
+        );
+      }
+
+      this.db
+        .query(
+          `
+          INSERT INTO app_settings (key, value_json, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(key) DO UPDATE SET
+            value_json = excluded.value_json,
+            updated_at = excluded.updated_at
+        `,
+        )
+        .run('usage_refresh', JSON.stringify(refresh), refresh.refreshedAt);
+    })();
+  }
+
+  listUsageEvents(): UsageEventRecord[] {
+    const rows = this.db
+      .query(
+        `
+        SELECT
+          record_id as recordId,
+          session_id as sessionId,
+          thread_id as threadId,
+          event_timestamp as eventTimestamp,
+          source_file as sourceFile,
+          line_number as lineNumber,
+          model,
+          effort,
+          input_tokens as inputTokens,
+          cached_input_tokens as cachedInputTokens,
+          uncached_input_tokens as uncachedInputTokens,
+          output_tokens as outputTokens,
+          reasoning_output_tokens as reasoningOutputTokens,
+          total_tokens as totalTokens,
+          is_archived as isArchived
+        FROM usage_events
+        ORDER BY event_timestamp ASC, line_number ASC, record_id ASC
+      `,
+      )
+      .all() as Array<
+      Omit<UsageEventRecord, 'isArchived'> & {
+        isArchived: number;
+      }
+    >;
+
+    return rows.map((row) => ({
+      ...row,
+      isArchived: Number(row.isArchived) === 1,
+    }));
   }
 
   resetImportedData(): void {

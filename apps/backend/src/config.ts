@@ -7,6 +7,7 @@ export interface AppConfig {
   databasePath: string;
   codexHome?: string;
   agentsHome?: string;
+  usagePricingPath?: string;
   openAiBaseUrl: string | null;
   openAiApiKey: string | null;
   openAiModel: string | null;
@@ -43,6 +44,7 @@ export function getConfig(): AppConfig {
     databasePath: resolveDatabasePath(projectRoot),
     codexHome: process.env.CODEX_HOME ?? join(homedir(), '.codex'),
     agentsHome: process.env.AGENTS_HOME ?? join(homedir(), '.agents'),
+    usagePricingPath: process.env.CODEX_BOARDS_USAGE_PRICING_PATH,
     openAiBaseUrl:
       process.env.OPENAI_COMPAT_BASE_URL ?? process.env.OPENAI_BASE_URL ?? null,
     openAiApiKey:

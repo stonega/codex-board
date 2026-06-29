@@ -18,6 +18,9 @@ The UI emphasizes reviewability:
 - commit and tag evidence are shown when present
 - each sync run shows a per-file parse log for imported, skipped, and failed rollouts
 - saved views can pin review queues or Git-heavy work
+- the Usage page charts aggregate token history, estimated local fee, cached input, uncached input, reasoning output, and newly started threads by day
 - the Settings dialog exposes the active parser base URL, model, and API key status, and those settings persist across backend restarts
+
+Usage charts read aggregate token counters from local Codex logs, including archived sessions. Estimated fees require a local `usage-pricing.json` file; unpriced models remain visible instead of being hidden from totals.
 
 The native GNOME app provides the same core workflows with GTK/libadwaita controls: project navigation, saved views, filtering, sync, parser settings, sync history, review toggles, traceability details, sub-issues, and Multica export.

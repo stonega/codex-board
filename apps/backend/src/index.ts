@@ -25,11 +25,13 @@ import {
 import { BoardsDatabase } from './db';
 import { getSkillDetail, listSkillRecommendations, listSkills } from './skills';
 import { SyncService } from './sync-service';
+import { UsageService } from './usage';
 
 export function createAppServer(config: AppConfig = getConfig()) {
   const database = new BoardsDatabase(config.databasePath);
   applyPersistedParserSettings(config, database.readParserSettings());
   const syncService = new SyncService(database, config);
+  const usageService = new UsageService(database, config);
   const app = new Hono();
 
   app.use('/api/*', cors());
@@ -116,6 +118,28 @@ export function createAppServer(config: AppConfig = getConfig()) {
     };
 
     return context.json(response);
+  });
+
+  app.get('/api/usage', (context) => {
+    const query = context.req.query();
+    return context.json(
+      usageService.summary({
+        preset: query.range ?? query.preset,
+        startDate: query.start ?? query.startDate,
+        endDate: query.end ?? query.endDate,
+      }),
+    );
+  });
+
+  app.post('/api/usage/refresh', (context) => {
+    const query = context.req.query();
+    return context.json(
+      usageService.refresh({
+        preset: query.range ?? query.preset,
+        startDate: query.start ?? query.startDate,
+        endDate: query.end ?? query.endDate,
+      }),
+    );
   });
 
   app.post('/api/settings', async (context) => {

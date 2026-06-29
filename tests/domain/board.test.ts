@@ -802,6 +802,52 @@ describe('parser settings', () => {
       rmSync(gitWorkspace, { force: true, recursive: true });
     }
   });
+
+  test('sync processes all discovered rollout files', async () => {
+    const root = `/tmp/codex-boards-full-parse-${Date.now()}`;
+    const sessionsRoot = join(root, 'sessions');
+    mkdirSync(join(sessionsRoot, '2026', '04', '06'), { recursive: true });
+
+    for (let index = 0; index < 25; index += 1) {
+      writeFileSync(
+        join(
+          sessionsRoot,
+          '2026',
+          '04',
+          '06',
+          `rollout-no-git-${String(index).padStart(2, '0')}.jsonl`,
+        ),
+        `{"timestamp":"2026-04-06T08:00:00.000Z","type":"session_meta","payload":{"id":"no-git-${index}","timestamp":"2026-04-06T07:59:00.000Z","cwd":"/tmp/no-git-${index}"}}\n`,
+      );
+    }
+
+    const server = createAppServer({
+      port: 7788,
+      sessionsRoot,
+      databasePath: join(root, 'boards.sqlite'),
+      openAiBaseUrl: null,
+      openAiApiKey: null,
+      openAiModel: null,
+    });
+
+    try {
+      const syncResponse = await server.app.request('/api/sync', {
+        method: 'POST',
+      });
+      expect(syncResponse.status).toBe(200);
+      expect(await syncResponse.json()).toMatchObject({
+        sync: {
+          scannedFiles: 25,
+          changedFiles: 25,
+          importedThreads: 0,
+          skippedThreads: 25,
+        },
+      });
+    } finally {
+      server.close();
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
 });
 
 describe('rollout parser', () => {

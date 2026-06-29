@@ -22,10 +22,9 @@ export class SyncService {
   async sync(): Promise<SyncDiagnostics> {
     const startedAt = new Date().toISOString();
     const runId = randomUUID();
-    let files = listRolloutFiles(this.config.sessionsRoot);
+    const files = [...listRolloutFiles(this.config.sessionsRoot)].reverse();
 
-    // Temporary debug mode: always rebuild from scratch from the current session set.
-    files = [...files].reverse().slice(0, 20);
+    // Always rebuild from scratch from the current session set.
     this.database.resetImportedData();
 
     const changedFiles = files.length;

@@ -75,13 +75,15 @@ You can also inspect and update the runtime parser settings from the web app's S
 - The backend scans `~/.codex/sessions` on startup
 - Only Git-backed threads are imported
 - Parsed issues are stored in SQLite under `.tmp/codex-boards.sqlite` by default
-- Sync currently runs as a full rebuild in debug mode: each sync deletes imported issues, projects, sync cache, and sync history, then reparses the current rollout set from scratch
+- Sync currently runs as a full rebuild: each sync deletes imported issues, projects, sync cache, and sync history, then reparses the current rollout set from scratch
 - If AI parsing is unavailable, fallback issues are still persisted and marked for review
 - Parser settings can be changed at runtime through `GET /api/settings` and `POST /api/settings`, and persisted in SQLite
 - Sync runs persist parser base URL, configured model, resolved response model(s), request counts, token totals, and parse logs in SQLite
 - Skills are exposed read-only through `GET /api/skills` and `GET /api/skills/:id`; global discovery reads `${CODEX_HOME:-~/.codex}/skills`, `${AGENTS_HOME:-~/.agents}/skills`, and enabled plugin skill roots from `${CODEX_HOME:-~/.codex}/config.toml`
 - Project skill discovery reads `.codex/skills` and `.agents/skills` under the selected project's `workspacePath`
 - Project skill recommendations are exposed through `GET /api/skills/recommendations?projectId=...`; the backend ranks existing global, plugin, agent, and project-local skills by deterministic overlap with the project's stored issue titles, summaries, tags, warnings, Git evidence, and parse payload previews
+- Usage aggregation is exposed through `GET /api/usage` and `POST /api/usage/refresh`; refresh reads aggregate `token_count` rows from active sessions and `${CODEX_HOME:-~/.codex}/archived_sessions`
+- Usage pricing is loaded from `${CODEX_BOARDS_USAGE_PRICING_PATH}` when set, otherwise `usage-pricing.json` next to the SQLite database; normal usage reads do not fetch pricing from the network
 - The desktop shell starts the backend on a local loopback port and injects that API base URL into the shared React app at runtime
 - The GNOME shell starts the same backend on a local loopback port and renders the board with native GTK/libadwaita widgets
 - Desktop builds store SQLite under the platform app data directory by setting `CODEX_BOARDS_APP_DATA_DIR`
@@ -119,7 +121,7 @@ The Flatpak manifest uses `org.gnome.Platform` and `org.gnome.Sdk` with runtime 
 
 ## Current limitations
 
-- Diff-heavy and policy-heavy content is intentionally excluded to control parse cost
+- Diff-heavy and policy-heavy content is intentionally excluded before parsing
 - Assignee and due date remain null unless the thread states them clearly
 - Manual merge/split correction endpoints are intentionally lightweight in v1
 - Desktop packaging currently targets macOS and Linux first

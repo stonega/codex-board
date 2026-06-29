@@ -23,6 +23,11 @@
   --project-tab-active: #ffffff;
   --project-tab-hover: rgba(55, 53, 47, 0.08);
   --project-tab-active-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  --chart-1: #2383e2;
+  --chart-2: #10a37f;
+  --chart-3: #d9730d;
+  --chart-4: #a855f7;
+  --chart-5: #ef4444;
 }
 
 :root[data-theme="dark"],
@@ -70,6 +75,11 @@
   --color-notion-hover: rgba(55, 53, 47, 0.03);
   --color-notion-active: rgba(55, 53, 47, 0.06);
   --color-notion-blue: #2383e2;
+  --color-chart-1: #2383e2;
+  --color-chart-2: #10a37f;
+  --color-chart-3: #d9730d;
+  --color-chart-4: #a855f7;
+  --color-chart-5: #ef4444;
 }
 
 @layer base {

@@ -27,6 +27,7 @@ The domain model is central to both, so it lives in a shared package.
   - Notion-style project/issues workspace
   - filters, saved views, and issue detail sheet
   - global and project-local skills catalog with a shared detail sheet
+  - usage dashboard with local token, cost, cache, reasoning, and thread-start charts
 - `apps/desktop`
   - Tauri desktop wrapper
   - local backend process lifecycle
@@ -52,6 +53,7 @@ The first working pipeline now produces:
   - each run records a per-file parse log for imported, skipped, and failed rollouts
   - each run also records parser target, resolved response model(s), and token usage totals for auditability
 - `skills`: read-only `SKILL.md` files discovered from local Codex, agent, enabled plugin, and selected project skill roots
+- `usage events`: aggregate-only Codex token-count rows from active and archived local session logs
 
 ## Inference strategy
 
@@ -76,6 +78,8 @@ Primary endpoints:
 - `GET /api/skills`
 - `GET /api/skills/recommendations`
 - `GET /api/skills/:id`
+- `GET /api/usage`
+- `POST /api/usage/refresh`
 - `GET /api/issues`
 - `GET /api/issues/:id`
 - `POST /api/sync`
@@ -83,6 +87,8 @@ Primary endpoints:
 - `GET /api/views`
 - `POST /api/views`
 
-The web UI consumes these endpoints directly and renders project navigation, filterable issue tables, global and project-local skill lists, a runtime parser settings sheet with sync history, and right-side detail sheets.
+The web UI consumes these endpoints directly and renders project navigation, filterable issue tables, global and project-local skill lists, usage charts, a runtime parser settings sheet with sync history, and right-side detail sheets.
+
+The usage dashboard follows the same local-first boundary as issue ingestion. It parses only token-count aggregates from local Codex JSONL logs, including archived sessions, and persists no prompts, assistant messages, tool output, command text, patches, or transcript snippets. Estimated USD cost is calculated only from a local pricing JSON file; normal dashboard reads do not fetch pricing from the network.
 
 The desktop shells reuse the same HTTP API. The Tauri app launches the backend as a local companion process, waits for readiness, and then loads the shared web UI against the injected API base URL. The GNOME app follows the same sidecar lifecycle, but renders project navigation, filters, issue detail, parser settings, sync history, review triage, saved views, and Multica export with native GTK/libadwaita controls.

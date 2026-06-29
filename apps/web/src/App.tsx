@@ -47,6 +47,7 @@ import type {
   UpdateSettingsPayload,
 } from '@codex-boards/domain';
 
+import { UsagePage } from './UsagePage';
 import { Badge } from './components/ui/badge';
 import { Button } from './components/ui/button';
 import { Input } from './components/ui/input';
@@ -84,7 +85,7 @@ const PARSER_PRESETS = {
   },
 } as const;
 
-type MainView = 'project' | 'skills';
+type MainView = 'project' | 'skills' | 'usage';
 type ProjectTab = 'issues' | 'skills';
 
 const SIDEBAR_EXPANDED_WIDTH = 240;
@@ -1169,6 +1170,12 @@ function BoardPage() {
     setExportMessage(null);
   }
 
+  function openUsage() {
+    setMainView('usage');
+    setError(null);
+    setExportMessage(null);
+  }
+
   const sidebarVisuallyCollapsed = sidebarCollapsed || smallViewport;
   const showSidebarLabels =
     !sidebarVisuallyCollapsed || (sidebarLabelsVisible && !smallViewport);
@@ -1407,8 +1414,29 @@ function BoardPage() {
             </Button>
           </div>
 
-          <div className="flex-1 overflow-y-auto">
+          <div className="flex-1 overflow-y-auto overflow-x-hidden">
             <div className="px-2.5 py-2 grid gap-[1px]">
+              <button
+                className={`w-full flex items-center gap-2 rounded-md p-1.5 text-[0.875rem] transition-colors ${mainView === 'usage' ? 'bg-notion-active' : 'hover:bg-notion-hover'} ${showSidebarLabels ? 'text-left' : 'justify-center'}`}
+                onClick={openUsage}
+                type="button"
+                title="Usage"
+              >
+                <div
+                  className={
+                    'w-6 h-6 flex items-center justify-center rounded-full font-semibold text-[0.875rem] shrink-0 bg-notion-active text-notion-muted'
+                  }
+                >
+                  <Database size={14} />
+                </div>
+                {showSidebarLabels && (
+                  <div className="w-[176px] shrink-0 overflow-hidden py-0.5">
+                    <strong className="block truncate font-medium leading-tight">
+                      Usage
+                    </strong>
+                  </div>
+                )}
+              </button>
               <button
                 className={`w-full flex items-center gap-2 rounded-md p-1.5 text-[0.875rem] transition-colors ${mainView === 'skills' ? 'bg-notion-active' : 'hover:bg-notion-hover'} ${showSidebarLabels ? 'text-left' : 'justify-center'}`}
                 onClick={openGlobalSkills}
@@ -1503,6 +1531,8 @@ function BoardPage() {
             <div className="flex items-center gap-2 text-[0.875rem]">
               {mainView === 'skills' ? (
                 <span className="font-medium">Skills</span>
+              ) : mainView === 'usage' ? (
+                <span className="font-medium">Usage</span>
               ) : (
                 <>
                   <span className="text-notion-muted">Projects</span>
@@ -1550,6 +1580,8 @@ function BoardPage() {
                   />
                 </div>
               </>
+            ) : mainView === 'usage' ? (
+              <UsagePage />
             ) : (
               <>
                 <div className="px-12 pt-8 pb-3 flex items-center gap-3">

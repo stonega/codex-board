@@ -93,6 +93,81 @@ export interface SkillRecommendation {
   reasons: string[];
 }
 
+export type UsageRangePreset = 'last-7-days' | 'last-30-days' | 'custom';
+
+export interface UsageDailyPoint {
+  date: string;
+  totalTokens: number;
+  estimatedCostUsd: number;
+  cachedInputTokens: number;
+  uncachedInputTokens: number;
+  reasoningOutputTokens: number;
+  newThreadCount: number;
+}
+
+export interface UsageModelSummary {
+  model: string;
+  pricedAs: string | null;
+  pricingStatus: 'priced' | 'estimated' | 'unpriced';
+  totalTokens: number;
+  cachedInputTokens: number;
+  uncachedInputTokens: number;
+  outputTokens: number;
+  reasoningOutputTokens: number;
+  estimatedCostUsd: number | null;
+}
+
+export interface UsagePricingSummary {
+  loaded: boolean;
+  path: string;
+  source: {
+    name?: string;
+    url?: string;
+    tier?: string;
+    fetchedAt?: string;
+  } | null;
+  pricedTokens: number;
+  unpricedTokens: number;
+  pricedTokenRatio: number;
+  unpricedModelCount: number;
+}
+
+export interface UsageRefreshSummary {
+  refreshedAt: string | null;
+  scannedFiles: number;
+  parsedEvents: number;
+  skippedEvents: number;
+  includedArchived: boolean;
+}
+
+export interface UsageSummaryResponse {
+  generatedAt: string;
+  range: {
+    preset: UsageRangePreset;
+    startDate: string;
+    endDate: string;
+  };
+  summary: {
+    totalTokens: number;
+    estimatedCostUsd: number;
+    cachedInputTokens: number;
+    uncachedInputTokens: number;
+    reasoningOutputTokens: number;
+    newThreadCount: number;
+    eventCount: number;
+    cacheRatio: number;
+  };
+  pricing: UsagePricingSummary;
+  refresh: UsageRefreshSummary;
+  daily: UsageDailyPoint[];
+  models: UsageModelSummary[];
+}
+
+export interface UsageRefreshResponse {
+  ok: boolean;
+  usage: UsageSummaryResponse;
+}
+
 export interface SyncDiagnostics {
   runId: string;
   startedAt: string;
