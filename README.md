@@ -4,6 +4,10 @@
 
 It scans Codex session rollouts, keeps Git-backed threads, extracts parent issues and sub-issues, stores the results in SQLite, and renders them in a React/Vite workspace with project navigation, filters, saved views, detail sheets, parser settings, live sync status, first-run onboarding, and local skill catalogs.
 
+## Screenshots
+
+![Codex Boards usage dashboard](screenshots/usage.png)
+
 ## Current Packages
 
 - `apps/backend`: Hono API, rollout sync service, SQLite persistence, OpenAI-compatible parsing, fallback issue extraction, skill discovery, skill recommendations, and Multica export.
@@ -81,30 +85,67 @@ Default local URLs:
 - Web: `http://localhost:5673`
 - Backend: `http://localhost:7788`
 
-## CLI
+## Usage Guide
 
 Install the CLI from npm:
 
 ```bash
-npm install -g codex-boards
+npm install -g codex-board
 ```
 
 The published CLI requires `bun` to be available on your `PATH`.
 
-Open the local app:
+Start Codex Boards with the default local ports:
 
 ```bash
 codex-board
 ```
 
-Useful flags:
+By default, this starts:
 
-- `--no-open`: start servers without opening a browser
-- `--clear`: ask for confirmation, then delete local Codex Boards SQLite data before startup
-- `--backend-port <port>`: backend API port
-- `--web-port <port>`: web UI port
-- `--host <host>`: local bind host
-- `--ready-timeout-ms <ms>`: startup readiness timeout
+- Web UI: `http://localhost:5673`
+- Backend API: `http://localhost:7788`
+
+Start without opening a browser:
+
+```bash
+codex-board --no-open
+```
+
+Use different ports when the defaults are already in use:
+
+```bash
+codex-board --web-port 5680 --backend-port 7789
+```
+
+Bind to a different host:
+
+```bash
+codex-board --host 0.0.0.0
+```
+
+Clear Codex Boards local SQLite data before startup:
+
+```bash
+codex-board --clear
+```
+
+Show CLI help or the installed version:
+
+```bash
+codex-board --help
+codex-board --version
+```
+
+Common environment overrides:
+
+```bash
+CODEX_SESSIONS_ROOT=/path/to/codex/sessions codex-board
+CODEX_BOARDS_DB_PATH=/path/to/codex-boards.sqlite codex-board
+CODEX_BOARDS_SYNC_INTERVAL_MS=0 codex-board
+```
+
+## Export CLI
 
 Export issues to Multica:
 
