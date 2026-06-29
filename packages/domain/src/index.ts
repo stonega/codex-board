@@ -188,6 +188,44 @@ export interface SyncDiagnostics {
   parseLog: SyncParseLogEntry[];
 }
 
+export type SyncTrigger = 'manual' | 'background' | 'onboarding';
+
+export type SyncState = 'idle' | 'syncing' | 'error';
+
+export type SyncPhase =
+  | 'idle'
+  | 'scanning'
+  | 'parsing'
+  | 'persisting'
+  | 'completed'
+  | 'failed';
+
+export interface SyncProgress {
+  totalFiles: number;
+  scannedFiles: number;
+  changedFiles: number;
+  importedThreads: number;
+  skippedThreads: number;
+  aiParsedIssues: number;
+  fallbackIssues: number;
+  reviewIssues: number;
+  currentFilePath: string | null;
+}
+
+export interface SyncStatus {
+  generatedAt: string;
+  state: SyncState;
+  phase: SyncPhase;
+  trigger: SyncTrigger | null;
+  runId: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  nextSyncAt: string | null;
+  lastSync: SyncDiagnostics | null;
+  latestError: string | null;
+  progress: SyncProgress;
+}
+
 export interface SyncTokenUsage {
   promptTokens: number;
   completionTokens: number;
@@ -268,6 +306,7 @@ export interface SavedViewListResponse {
 export interface SyncResponse {
   ok: boolean;
   sync: SyncDiagnostics;
+  status?: SyncStatus;
 }
 
 export interface ExportMulticaPayload {
@@ -301,9 +340,17 @@ export interface ParserSettings {
   apiKeyConfigured: boolean;
 }
 
+export interface OnboardingState {
+  required: boolean;
+  step: 'provider' | 'sync' | 'complete';
+  providerReady: boolean;
+  hasCompletedSync: boolean;
+}
+
 export interface SettingsResponse {
   generatedAt: string;
   parser: ParserSettings;
+  onboarding: OnboardingState;
   sync: SyncDiagnostics | null;
   syncHistory: SyncDiagnostics[];
 }
@@ -312,6 +359,15 @@ export interface SyncRunListResponse {
   generatedAt: string;
   sync: SyncDiagnostics | null;
   runs: SyncDiagnostics[];
+}
+
+export interface SyncStatusResponse {
+  generatedAt: string;
+  status: SyncStatus;
+}
+
+export interface SyncRequestPayload {
+  trigger?: SyncTrigger;
 }
 
 export interface UpdateSettingsPayload {

@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
 import { Hono } from 'hono';
+import type { Context, Next } from 'hono';
+import { upgradeWebSocket, websocket } from 'hono/bun';
 import { cors } from 'hono/cors';
 
 import {
@@ -9,7 +11,9 @@ import {
   type ParsedIssue,
   type SavedView,
   type SettingsResponse,
+  type SyncRequestPayload,
   type SyncRunListResponse,
+  type SyncStatusResponse,
   slugify,
 } from '../../../packages/domain/src/index';
 
@@ -24,17 +28,84 @@ import {
 } from './config';
 import { BoardsDatabase } from './db';
 import { getSkillDetail, listSkillRecommendations, listSkills } from './skills';
+import { SyncCoordinator } from './sync-coordinator';
 import { SyncService } from './sync-service';
 import { UsageService } from './usage';
+
+function isWebSocketRequest(context: Context): boolean {
+  return context.req.header('upgrade')?.toLowerCase() === 'websocket';
+}
+
+function createOnboardingState(response: {
+  parser: ReturnType<typeof readParserSettings>;
+  sync: SettingsResponse['sync'];
+}): SettingsResponse['onboarding'] {
+  const providerReady = Boolean(
+    response.parser.baseUrl &&
+      response.parser.model &&
+      response.parser.apiKeyConfigured,
+  );
+  const hasCompletedSync = Boolean(response.sync);
+  const step = !providerReady
+    ? 'provider'
+    : hasCompletedSync
+      ? 'complete'
+      : 'sync';
+
+  return {
+    required: step !== 'complete',
+    step,
+    providerReady,
+    hasCompletedSync,
+  };
+}
+
+function createSettingsResponse(
+  config: AppConfig,
+  database: BoardsDatabase,
+): SettingsResponse {
+  const parser = readParserSettings(config);
+  const sync = database.getLatestSync();
+
+  return {
+    generatedAt: new Date().toISOString(),
+    parser,
+    onboarding: createOnboardingState({ parser, sync }),
+    sync,
+    syncHistory: database.listSyncRuns(),
+  };
+}
+
+async function readOptionalSyncPayload(context: Context) {
+  const contentType = context.req.header('content-type') ?? '';
+  if (!contentType.includes('application/json')) {
+    return {};
+  }
+
+  try {
+    return (await context.req.json()) as SyncRequestPayload;
+  } catch {
+    return {};
+  }
+}
 
 export function createAppServer(config: AppConfig = getConfig()) {
   const database = new BoardsDatabase(config.databasePath);
   applyPersistedParserSettings(config, database.readParserSettings());
   const syncService = new SyncService(database, config);
+  const syncCoordinator = new SyncCoordinator(database, syncService, config);
   const usageService = new UsageService(database, config);
   const app = new Hono();
 
-  app.use('/api/*', cors());
+  const corsMiddleware = cors();
+  app.use('/api/*', (context: Context, next: Next) => {
+    if (isWebSocketRequest(context)) {
+      return next();
+    }
+
+    return corsMiddleware(context, next);
+  });
+  syncCoordinator.startBackgroundSyncIfEligible();
 
   function readFilters(
     query: Record<string, string | undefined>,
@@ -61,6 +132,7 @@ export function createAppServer(config: AppConfig = getConfig()) {
       databasePath: config.databasePath,
       sessionsRoot: config.sessionsRoot,
       latestSync: database.getLatestSync(),
+      syncStatus: syncCoordinator.getStatus(),
       parser: readParserSettings(config),
     });
   });
@@ -110,14 +182,7 @@ export function createAppServer(config: AppConfig = getConfig()) {
   });
 
   app.get('/api/settings', (context) => {
-    const response: SettingsResponse = {
-      generatedAt: new Date().toISOString(),
-      parser: readParserSettings(config),
-      sync: database.getLatestSync(),
-      syncHistory: database.listSyncRuns(),
-    };
-
-    return context.json(response);
+    return context.json(createSettingsResponse(config, database));
   });
 
   app.get('/api/usage', (context) => {
@@ -155,15 +220,10 @@ export function createAppServer(config: AppConfig = getConfig()) {
       return context.json({ message: 'parser settings are required' }, 400);
     }
 
-    const response: SettingsResponse = {
-      generatedAt: new Date().toISOString(),
-      parser: updateParserSettings(config, body.parser),
-      sync: database.getLatestSync(),
-      syncHistory: database.listSyncRuns(),
-    };
+    updateParserSettings(config, body.parser);
     database.saveParserSettings(readPersistableParserSettings(config));
 
-    return context.json(response);
+    return context.json(createSettingsResponse(config, database));
   });
 
   app.get('/api/issues', (context) => {
@@ -242,11 +302,51 @@ export function createAppServer(config: AppConfig = getConfig()) {
   });
 
   app.post('/api/sync', async (context) => {
-    const sync = await syncService.sync();
+    const body = await readOptionalSyncPayload(context);
+    const trigger =
+      body.trigger === 'background' || body.trigger === 'onboarding'
+        ? body.trigger
+        : 'manual';
+    const sync = await syncCoordinator.run(trigger);
     return context.json({
       ok: true,
       sync,
+      status: syncCoordinator.getStatus(),
     });
+  });
+
+  const syncStatusSocket = upgradeWebSocket(() => {
+    let unsubscribe: (() => void) | null = null;
+
+    return {
+      onOpen(_event, ws) {
+        unsubscribe = syncCoordinator.subscribe((status) => {
+          ws.send(
+            JSON.stringify({
+              type: 'sync-status',
+              status,
+            }),
+          );
+        });
+      },
+      onClose() {
+        unsubscribe?.();
+        unsubscribe = null;
+      },
+    };
+  });
+
+  app.get('/api/sync/status', (context, next) => {
+    if (isWebSocketRequest(context)) {
+      return syncStatusSocket(context, next);
+    }
+
+    const response: SyncStatusResponse = {
+      generatedAt: new Date().toISOString(),
+      status: syncCoordinator.getStatus(),
+    };
+
+    return context.json(response);
   });
 
   app.post('/api/export/multica', async (context) => {
@@ -257,7 +357,7 @@ export function createAppServer(config: AppConfig = getConfig()) {
     }
 
     if (body.runSync !== false) {
-      await syncService.sync();
+      await syncCoordinator.run('manual');
     }
 
     const result = await exportIssuesToMultica(database, {
@@ -308,7 +408,9 @@ export function createAppServer(config: AppConfig = getConfig()) {
     config,
     database,
     syncService,
+    syncCoordinator,
     close() {
+      syncCoordinator.close();
       database.close();
     },
   };
@@ -317,7 +419,11 @@ export function createAppServer(config: AppConfig = getConfig()) {
 export function serveAppServer(server = createAppServer()) {
   return Bun.serve({
     port: server.config.port,
-    fetch: async (request) => server.app.fetch(request),
+    fetch: async (request, bunServer) =>
+      server.app.fetch(request, {
+        server: bunServer,
+      }),
+    websocket,
   });
 }
 
@@ -338,9 +444,6 @@ if (import.meta.main) {
 
       server = createAppServer(config);
       serveAppServer(server);
-      await server.syncService.sync().catch((error) => {
-        console.error('Initial sync failed', error);
-      });
 
       console.log(
         `Backend listening on http://localhost:${server.config.port}`,
@@ -348,7 +451,7 @@ if (import.meta.main) {
     } else if (command.command === 'export-multica') {
       server = createAppServer();
       if (command.options?.runSync) {
-        await server.syncService.sync();
+        await server.syncCoordinator.run('manual');
       }
 
       const result = await exportIssuesToMultica(

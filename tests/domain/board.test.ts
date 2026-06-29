@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 
 import { describe, expect, test } from 'bun:test';
 
@@ -206,6 +207,97 @@ describe('parser settings', () => {
       expect(restartedServer.config.openAiApiKey).toBe('persisted-key');
     } finally {
       restartedServer.close();
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test('exposes onboarding state and sync status through the api', async () => {
+    const root = `/tmp/codex-boards-status-${Date.now()}`;
+    mkdirSync(root, { recursive: true });
+
+    const server = createAppServer({
+      port: 7788,
+      sessionsRoot: join(root, 'sessions'),
+      databasePath: join(root, 'boards.sqlite'),
+      openAiBaseUrl: null,
+      openAiApiKey: null,
+      openAiModel: null,
+      syncIntervalMs: 0,
+    });
+
+    try {
+      const settingsResponse = await server.app.request('/api/settings');
+      expect(settingsResponse.status).toBe(200);
+      expect(await settingsResponse.json()).toMatchObject({
+        onboarding: {
+          required: true,
+          step: 'provider',
+          providerReady: false,
+          hasCompletedSync: false,
+        },
+      });
+
+      const statusResponse = await server.app.request('/api/sync/status');
+      expect(statusResponse.status).toBe(200);
+      expect(await statusResponse.json()).toMatchObject({
+        status: {
+          state: 'idle',
+          phase: 'idle',
+          lastSync: null,
+          nextSyncAt: null,
+        },
+      });
+    } finally {
+      server.close();
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test('moves onboarding to sync step after provider setup', async () => {
+    const root = `/tmp/codex-boards-onboarding-${Date.now()}`;
+    mkdirSync(root, { recursive: true });
+
+    const server = createAppServer({
+      port: 7788,
+      sessionsRoot: join(root, 'sessions'),
+      databasePath: join(root, 'boards.sqlite'),
+      openAiBaseUrl: null,
+      openAiApiKey: null,
+      openAiModel: null,
+      syncIntervalMs: 0,
+    });
+
+    try {
+      const response = await server.app.request('/api/settings', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          parser: {
+            baseUrl: ' https://api.deepseek.com ',
+            model: ' deepseek-v4-flash ',
+            apiKey: ' test-key ',
+          },
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        parser: {
+          baseUrl: 'https://api.deepseek.com',
+          model: 'deepseek-v4-flash',
+          apiKeyConfigured: true,
+        },
+        onboarding: {
+          required: true,
+          step: 'sync',
+          providerReady: true,
+          hasCompletedSync: false,
+        },
+      });
+    } finally {
+      server.close();
       rmSync(root, { force: true, recursive: true });
     }
   });
@@ -731,6 +823,111 @@ describe('parser settings', () => {
       server.close();
       rmSync(root, { force: true, recursive: true });
       rmSync(gitWorkspace, { force: true, recursive: true });
+    }
+  });
+
+  test('skips unchanged rollout files during incremental sync', async () => {
+    const root = `/tmp/codex-boards-incremental-${Date.now()}`;
+    const sessionsRoot = join(root, 'sessions');
+    const gitWorkspace = '/tmp/codex-boards-fixture';
+    mkdirSync(join(sessionsRoot, '2026', '04', '06'), { recursive: true });
+    mkdirSync(join(gitWorkspace, '.git'), { recursive: true });
+
+    writeFileSync(
+      join(sessionsRoot, '2026', '04', '06', 'rollout-sample.jsonl'),
+      readFileSync(
+        join(process.cwd(), 'tests/fixtures/rollout-sample.jsonl'),
+        'utf8',
+      ),
+    );
+
+    const server = createAppServer({
+      port: 7788,
+      sessionsRoot,
+      databasePath: join(root, 'boards.sqlite'),
+      openAiBaseUrl: null,
+      openAiApiKey: null,
+      openAiModel: null,
+      syncIntervalMs: 0,
+    });
+
+    try {
+      const firstSync = await server.app.request('/api/sync', {
+        method: 'POST',
+      });
+      expect(firstSync.status).toBe(200);
+      expect(await firstSync.json()).toMatchObject({
+        sync: {
+          scannedFiles: 1,
+          changedFiles: 1,
+          importedThreads: 1,
+        },
+      });
+
+      const secondSync = await server.app.request('/api/sync', {
+        method: 'POST',
+      });
+      expect(secondSync.status).toBe(200);
+      expect(await secondSync.json()).toMatchObject({
+        sync: {
+          scannedFiles: 1,
+          changedFiles: 0,
+          importedThreads: 0,
+          skippedThreads: 1,
+          parseLog: [
+            {
+              status: 'skipped',
+              message: 'Skipped: rollout file unchanged for current parser.',
+            },
+          ],
+        },
+      });
+
+      const issuesResponse = await server.app.request(
+        '/api/issues?projectId=codex-boards-fixture',
+      );
+      expect(issuesResponse.status).toBe(200);
+      expect(await issuesResponse.json()).toMatchObject({
+        issues: [
+          {
+            title: 'Build a sync service for the board',
+          },
+        ],
+      });
+    } finally {
+      server.close();
+      rmSync(root, { force: true, recursive: true });
+      rmSync(gitWorkspace, { force: true, recursive: true });
+    }
+  });
+
+  test('runs background sync after the first completed sync', async () => {
+    const root = `/tmp/codex-boards-background-sync-${Date.now()}`;
+    mkdirSync(root, { recursive: true });
+
+    const server = createAppServer({
+      port: 7788,
+      sessionsRoot: join(root, 'sessions'),
+      databasePath: join(root, 'boards.sqlite'),
+      openAiBaseUrl: null,
+      openAiApiKey: null,
+      openAiModel: null,
+      syncIntervalMs: 20,
+    });
+
+    try {
+      const firstSync = await server.app.request('/api/sync', {
+        method: 'POST',
+      });
+      expect(firstSync.status).toBe(200);
+
+      await delay(90);
+
+      expect(server.database.listSyncRuns().length).toBeGreaterThan(1);
+      expect(server.syncCoordinator.getStatus().lastSync).not.toBeNull();
+    } finally {
+      server.close();
+      rmSync(root, { force: true, recursive: true });
     }
   });
 

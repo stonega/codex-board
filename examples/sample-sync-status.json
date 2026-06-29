@@ -1,0 +1,26 @@
+{
+  "generatedAt": "2026-06-29T08:00:00.000Z",
+  "status": {
+    "generatedAt": "2026-06-29T08:00:00.000Z",
+    "state": "syncing",
+    "phase": "parsing",
+    "trigger": "background",
+    "runId": "sync-run-1",
+    "startedAt": "2026-06-29T07:59:58.000Z",
+    "completedAt": null,
+    "nextSyncAt": null,
+    "lastSync": null,
+    "latestError": null,
+    "progress": {
+      "totalFiles": 12,
+      "scannedFiles": 4,
+      "changedFiles": 2,
+      "importedThreads": 1,
+      "skippedThreads": 2,
+      "aiParsedIssues": 3,
+      "fallbackIssues": 0,
+      "reviewIssues": 1,
+      "currentFilePath": "/home/stone/.codex/sessions/2026/06/29/rollout-thread.jsonl"
+    }
+  }
+}

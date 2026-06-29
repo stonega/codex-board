@@ -60,6 +60,19 @@ export async function resolveApiBaseUrl(): Promise<string> {
   return apiBaseUrlPromise;
 }
 
+export function apiBaseUrlToWebSocketUrl(
+  apiBaseUrl: string,
+  path: string,
+): string {
+  const url = new URL(`${apiBaseUrl.replace(/\/+$/, '')}${path}`);
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  return url.toString();
+}
+
+export async function resolveSyncStatusWebSocketUrl(): Promise<string> {
+  return apiBaseUrlToWebSocketUrl(await resolveApiBaseUrl(), '/sync/status');
+}
+
 export function resetApiBaseUrlCache(): void {
   apiBaseUrlPromise = null;
 }

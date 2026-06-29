@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 
 import {
+  apiBaseUrlToWebSocketUrl,
   resetApiBaseUrlCache,
   resolveApiBaseUrl,
 } from '../../apps/web/src/lib/runtime';
@@ -46,5 +47,14 @@ describe('web runtime config', () => {
     await expect(resolveApiBaseUrl()).resolves.toBe(
       'http://127.0.0.1:8788/api',
     );
+  });
+
+  test('builds sync status websocket urls from api base urls', () => {
+    expect(
+      apiBaseUrlToWebSocketUrl('http://127.0.0.1:7788/api/', '/sync/status'),
+    ).toBe('ws://127.0.0.1:7788/api/sync/status');
+    expect(
+      apiBaseUrlToWebSocketUrl('https://boards.example/api', '/sync/status'),
+    ).toBe('wss://boards.example/api/sync/status');
   });
 });

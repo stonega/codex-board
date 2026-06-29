@@ -2,7 +2,7 @@
 
 `codex-boards` is a local-first Bun monorepo that turns local Codex rollout history into a project-oriented issue board.
 
-It scans Codex session rollouts, keeps Git-backed threads, extracts parent issues and sub-issues, stores the results in SQLite, and renders them in a React/Vite workspace with project navigation, filters, saved views, detail sheets, parser settings, and local skill catalogs.
+It scans Codex session rollouts, keeps Git-backed threads, extracts parent issues and sub-issues, stores the results in SQLite, and renders them in a React/Vite workspace with project navigation, filters, saved views, detail sheets, parser settings, live sync status, first-run onboarding, and local skill catalogs.
 
 ## Current Packages
 
@@ -37,8 +37,9 @@ The sync pipeline:
 4. Builds a truncated parse payload for each thread.
 5. Extracts a parent issue and optional sub-issues through an OpenAI-compatible parser when configured.
 6. Falls back to deterministic issue shaping when AI parsing is unavailable or fails.
-7. Stores projects, issues, Git evidence, parser diagnostics, sync runs, saved views, and settings in SQLite.
-8. Exposes the data through a local HTTP API consumed by the web UI.
+7. Skips unchanged rollout files on later syncs unless the file or parser fingerprint changed.
+8. Stores projects, issues, Git evidence, parser diagnostics, sync runs, saved views, and settings in SQLite.
+9. Exposes the data through a local HTTP/WebSocket API consumed by the web UI.
 
 The web UI supports:
 
@@ -46,7 +47,7 @@ The web UI supports:
 - issue table with search, status, priority, parse mode, review, commit, tag, and saved-view filters
 - issue detail sheets with traceability, Git evidence, warnings, parse previews, sub-issues, review toggling, merge, and split actions
 - parser settings with persisted OpenAI-compatible base URL, model, and API key status
-- sync history and per-file parse logs
+- first-run provider setup, an onboarding sync screen, homepage sync status, and sync history with per-file parse logs
 - global skills catalog discovered from local Codex, agent, and enabled plugin skill roots
 - project skills catalog discovered from `.codex/skills` and `.agents/skills` inside each project workspace
 - project skill recommendations ranked from issue and thread evidence
@@ -66,7 +67,7 @@ Recommended local browser workflow:
 bun run codex-board
 ```
 
-The `codex-board` CLI starts the backend API and Vite web app locally, waits for both ports to become reachable, and opens the web UI. Use the UI's sync action to refresh local Codex session data after the app opens.
+The `codex-board` CLI starts the backend API and Vite web app locally, waits for both ports to become reachable, and opens the web UI. On first open, the UI asks for an OpenAI-compatible parser provider, runs the first sync, and then enters the board. After that, the backend schedules background sync once per minute and the homepage shows live status.
 
 Separate local servers:
 
@@ -77,7 +78,7 @@ bun run dev:web
 
 Default local URLs:
 
-- Web: `http://localhost:5173`
+- Web: `http://localhost:5673`
 - Backend: `http://localhost:7788`
 
 ## CLI
@@ -126,6 +127,7 @@ Runtime paths:
 - `CODEX_BOARDS_APP_DATA_DIR`: app data directory; when set, SQLite is stored as `codex-boards.sqlite` under that directory
 - `CODEX_HOME`: Codex home for skill discovery, defaults to `~/.codex`
 - `AGENTS_HOME`: agents home for skill discovery, defaults to `~/.agents`
+- `CODEX_BOARDS_SYNC_INTERVAL_MS`: background sync interval, defaults to `60000`; set `0` to disable
 
 Optional parser configuration:
 
@@ -136,6 +138,8 @@ OPENAI_COMPAT_MODEL=
 ```
 
 The same parser settings can be inspected and updated from the web app's Settings dialog. Settings and sync diagnostics persist in SQLite across backend restarts.
+
+The Settings dialog includes Gemini, OpenRouter, DeepSeek, and custom provider presets. The DeepSeek preset uses `https://api.deepseek.com` with `deepseek-v4-flash`.
 
 ## API Surface
 
@@ -151,6 +155,7 @@ Primary backend endpoints:
 - `GET /api/settings`
 - `POST /api/settings`
 - `POST /api/sync`
+- `GET /api/sync/status`
 - `GET /api/sync/runs`
 - `GET /api/views`
 - `POST /api/views`

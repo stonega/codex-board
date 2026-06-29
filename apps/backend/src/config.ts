@@ -11,6 +11,7 @@ export interface AppConfig {
   openAiBaseUrl: string | null;
   openAiApiKey: string | null;
   openAiModel: string | null;
+  syncIntervalMs?: number;
 }
 
 function resolveProjectRoot(): string {
@@ -51,6 +52,7 @@ export function getConfig(): AppConfig {
       process.env.OPENAI_COMPAT_API_KEY ?? process.env.OPENAI_API_KEY ?? null,
     openAiModel:
       process.env.OPENAI_COMPAT_MODEL ?? process.env.OPENAI_MODEL ?? null,
+    syncIntervalMs: Number(process.env.CODEX_BOARDS_SYNC_INTERVAL_MS ?? 60_000),
   };
 }
 

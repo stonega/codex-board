@@ -22,7 +22,13 @@ import {
   Tags,
   X,
 } from 'lucide-react';
-import { startTransition, useEffect, useMemo, useState } from 'react';
+import {
+  startTransition,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
 import { Route, Routes } from 'react-router';
 
 import type {
@@ -44,6 +50,9 @@ import type {
   SkillSummary,
   SyncDiagnostics,
   SyncResponse,
+  SyncStatus,
+  SyncStatusResponse,
+  SyncTrigger,
   UpdateSettingsPayload,
 } from '@codex-boards/domain';
 
@@ -54,7 +63,10 @@ import { Input } from './components/ui/input';
 import { Select } from './components/ui/select';
 import { Sheet } from './components/ui/sheet';
 import { Table, TableEmpty, TableWrapper } from './components/ui/table';
-import { resolveApiBaseUrl } from './lib/runtime';
+import {
+  resolveApiBaseUrl,
+  resolveSyncStatusWebSocketUrl,
+} from './lib/runtime';
 
 const STATUS_OPTIONS: Array<IssueStatus | 'all'> = [
   'all',
@@ -82,6 +94,11 @@ const PARSER_PRESETS = {
     label: 'OpenRouter',
     baseUrl: 'https://openrouter.ai/api/v1',
     model: 'openai/gpt-4.1-mini',
+  },
+  deepseek: {
+    label: 'DeepSeek',
+    baseUrl: 'https://api.deepseek.com',
+    model: 'deepseek-v4-flash',
   },
 } as const;
 
@@ -613,6 +630,294 @@ function SkillDetailSheet({
   );
 }
 
+function ProviderPresetButtons({
+  onApplyPreset,
+}: {
+  onApplyPreset: (preset: keyof typeof PARSER_PRESETS) => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {Object.entries(PARSER_PRESETS).map(([id, preset]) => (
+        <button
+          key={id}
+          onClick={() => onApplyPreset(id as keyof typeof PARSER_PRESETS)}
+          type="button"
+          className="px-3 py-1.5 rounded border border-notion-border text-[0.875rem] hover:bg-notion-hover transition-colors font-medium text-notion-text bg-white shadow-sm"
+        >
+          {preset.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function SyncStatusPill({
+  status,
+  fallbackSync,
+}: {
+  status: SyncStatus | null;
+  fallbackSync: SyncDiagnostics | null;
+}) {
+  const syncing = status?.state === 'syncing';
+  const lastSync = status?.lastSync ?? fallbackSync;
+  const error = status?.latestError;
+  const label = syncing
+    ? status.progress.currentFilePath
+      ? `Syncing ${status.progress.scannedFiles}/${status.progress.totalFiles}`
+      : 'Syncing'
+    : error
+      ? 'Sync error'
+      : lastSync
+        ? `Synced ${new Date(lastSync.completedAt).toLocaleTimeString()}`
+        : 'Not synced';
+  const detail = syncing
+    ? `${status.progress.changedFiles} changed`
+    : status?.nextSyncAt
+      ? `Next ${new Date(status.nextSyncAt).toLocaleTimeString()}`
+      : null;
+
+  return (
+    <div
+      className={`flex items-center gap-2 rounded-md border px-2.5 py-1 text-[0.75rem] ${syncing ? 'border-blue-100 bg-blue-50 text-blue-700' : error ? 'border-rose-100 bg-rose-50 text-rose-700' : 'border-notion-border bg-notion-sidebar text-notion-muted'}`}
+      title={error ?? undefined}
+    >
+      <RefreshCw size={13} className={syncing ? 'animate-spin' : undefined} />
+      <span className="font-medium">{label}</span>
+      {detail ? <span className="text-current/70">{detail}</span> : null}
+    </div>
+  );
+}
+
+function OnboardingScreen({
+  form,
+  parserReady,
+  saving,
+  error,
+  syncStatus,
+  syncError,
+  syncActive,
+  onChange,
+  onApplyPreset,
+  onSaveProvider,
+  onRunSync,
+}: {
+  form: {
+    baseUrl: string;
+    model: string;
+    apiKey: string;
+    apiKeyConfigured: boolean;
+  };
+  parserReady: boolean;
+  saving: boolean;
+  error: string | null;
+  syncStatus: SyncStatus | null;
+  syncError: string | null;
+  syncActive: boolean;
+  onChange: (field: 'baseUrl' | 'model' | 'apiKey', value: string) => void;
+  onApplyPreset: (preset: keyof typeof PARSER_PRESETS) => void;
+  onSaveProvider: () => Promise<void>;
+  onRunSync: () => Promise<void>;
+}) {
+  const progress = syncStatus?.progress;
+  const totalFiles = progress?.totalFiles ?? 0;
+  const scannedFiles = progress?.scannedFiles ?? 0;
+  const percent =
+    totalFiles > 0
+      ? Math.min(100, Math.round((scannedFiles / totalFiles) * 100))
+      : syncActive
+        ? 12
+        : 0;
+  const providerStepActive = !parserReady;
+
+  return (
+    <main className="min-h-screen bg-white text-notion-text">
+      <section className="mx-auto flex min-h-screen w-full max-w-5xl flex-col justify-center gap-8 px-6 py-10">
+        <header className="grid gap-3">
+          <div className="flex items-center gap-2 text-sm font-medium text-notion-muted">
+            <div className="flex h-7 w-7 items-center justify-center rounded bg-notion-active">
+              <Layout size={15} />
+            </div>
+            Codex Boards
+          </div>
+          <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">
+            Set up sync
+          </h1>
+        </header>
+
+        <div className="grid gap-3 md:grid-cols-[220px_minmax(0,1fr)]">
+          <aside className="grid content-start gap-2 text-sm">
+            <div
+              className={`rounded-md border p-3 ${providerStepActive ? 'border-notion-blue bg-blue-50 text-blue-800' : 'border-emerald-100 bg-emerald-50 text-emerald-700'}`}
+            >
+              <p className="font-semibold">1. Provider</p>
+              <p className="mt-1 text-[0.81rem] opacity-80">
+                Configure an OpenAI-compatible parser.
+              </p>
+            </div>
+            <div
+              className={`rounded-md border p-3 ${providerStepActive ? 'border-notion-border bg-notion-sidebar text-notion-muted' : 'border-notion-blue bg-blue-50 text-blue-800'}`}
+            >
+              <p className="font-semibold">2. Sync</p>
+              <p className="mt-1 text-[0.81rem] opacity-80">
+                Import local Codex rollout history.
+              </p>
+            </div>
+          </aside>
+
+          <section className="rounded-lg border border-notion-border bg-white p-5 shadow-sm">
+            {providerStepActive ? (
+              <div className="grid gap-5">
+                <div>
+                  <h2 className="text-lg font-semibold tracking-tight">
+                    Choose parser provider
+                  </h2>
+                  <p className="mt-1 text-sm text-notion-muted">
+                    The first sync uses this provider to turn local threads into
+                    readable issues.
+                  </p>
+                </div>
+
+                <ProviderPresetButtons onApplyPreset={onApplyPreset} />
+
+                <div className="grid gap-4">
+                  <div className="grid gap-1.5">
+                    <label
+                      className="text-[0.75rem] font-semibold text-notion-muted uppercase tracking-wider"
+                      htmlFor="onboarding-baseUrl"
+                    >
+                      Base URL
+                    </label>
+                    <Input
+                      id="onboarding-baseUrl"
+                      onChange={(event) =>
+                        onChange('baseUrl', event.target.value)
+                      }
+                      placeholder="https://api.deepseek.com"
+                      value={form.baseUrl}
+                      className="w-full bg-notion-sidebar border border-notion-border focus:bg-white focus:border-notion-blue transition-all"
+                    />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <label
+                      className="text-[0.75rem] font-semibold text-notion-muted uppercase tracking-wider"
+                      htmlFor="onboarding-model"
+                    >
+                      Model
+                    </label>
+                    <Input
+                      id="onboarding-model"
+                      onChange={(event) =>
+                        onChange('model', event.target.value)
+                      }
+                      placeholder="deepseek-v4-flash"
+                      value={form.model}
+                      className="w-full bg-notion-sidebar border border-notion-border focus:bg-white focus:border-notion-blue transition-all"
+                    />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <label
+                      className="text-[0.75rem] font-semibold text-notion-muted uppercase tracking-wider"
+                      htmlFor="onboarding-apiKey"
+                    >
+                      API key
+                    </label>
+                    <Input
+                      id="onboarding-apiKey"
+                      onChange={(event) =>
+                        onChange('apiKey', event.target.value)
+                      }
+                      placeholder={
+                        form.apiKeyConfigured
+                          ? 'Stored already. Enter a new key to replace it.'
+                          : 'Enter API key'
+                      }
+                      type="password"
+                      value={form.apiKey}
+                      className="w-full bg-notion-sidebar border border-notion-border focus:bg-white focus:border-notion-blue transition-all"
+                    />
+                  </div>
+                </div>
+
+                {error ? (
+                  <p className="rounded border border-red-100 bg-red-50 p-3 text-sm text-red-800">
+                    {error}
+                  </p>
+                ) : null}
+
+                <div className="flex justify-end border-t border-notion-border pt-4">
+                  <Button
+                    disabled={
+                      saving ||
+                      !form.baseUrl.trim() ||
+                      !form.model.trim() ||
+                      (!form.apiKeyConfigured && !form.apiKey.trim())
+                    }
+                    onClick={() => void onSaveProvider()}
+                    className="bg-notion-blue px-4 text-white hover:bg-blue-600"
+                  >
+                    {saving ? 'Saving...' : 'Continue'}
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="grid gap-5">
+                <div>
+                  <h2 className="text-lg font-semibold tracking-tight">
+                    Syncing workspace
+                  </h2>
+                  <p className="mt-1 text-sm text-notion-muted">
+                    Codex Boards is importing local session history.
+                  </p>
+                </div>
+
+                <div className="grid gap-3">
+                  <div className="h-2 overflow-hidden rounded-full bg-notion-active">
+                    <div
+                      className="h-full rounded-full bg-notion-blue transition-all"
+                      style={{ width: `${percent}%` }}
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
+                    <Badge>
+                      {scannedFiles}/{totalFiles} scanned
+                    </Badge>
+                    <Badge>{progress?.changedFiles ?? 0} changed</Badge>
+                    <Badge>{progress?.importedThreads ?? 0} imported</Badge>
+                    <Badge>{progress?.skippedThreads ?? 0} skipped</Badge>
+                  </div>
+                  {progress?.currentFilePath ? (
+                    <p className="break-all rounded border border-notion-border bg-notion-sidebar p-2 font-mono text-[0.75rem] text-notion-muted">
+                      {progress.currentFilePath}
+                    </p>
+                  ) : null}
+                </div>
+
+                {syncError ? (
+                  <p className="rounded border border-red-100 bg-red-50 p-3 text-sm text-red-800">
+                    {syncError}
+                  </p>
+                ) : null}
+
+                {!syncActive && !syncStatus?.lastSync ? (
+                  <div className="flex justify-end border-t border-notion-border pt-4">
+                    <Button
+                      onClick={() => void onRunSync()}
+                      className="bg-notion-blue px-4 text-white hover:bg-blue-600"
+                    >
+                      <RefreshCw size={14} />
+                      Start sync
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
+            )}
+          </section>
+        </div>
+      </section>
+    </main>
+  );
+}
+
 function SettingsModal({
   open,
   form,
@@ -733,20 +1038,7 @@ function SettingsModal({
                   <span className="text-[0.75rem] font-semibold text-notion-muted uppercase tracking-wider">
                     Presets
                   </span>
-                  <div className="flex flex-wrap gap-2">
-                    {Object.entries(PARSER_PRESETS).map(([id, preset]) => (
-                      <button
-                        key={id}
-                        onClick={() =>
-                          onApplyPreset(id as keyof typeof PARSER_PRESETS)
-                        }
-                        type="button"
-                        className="px-3 py-1.5 rounded border border-notion-border text-[0.875rem] hover:bg-notion-hover transition-colors font-medium text-notion-text bg-white shadow-sm"
-                      >
-                        {preset.label}
-                      </button>
-                    ))}
-                  </div>
+                  <ProviderPresetButtons onApplyPreset={onApplyPreset} />
                 </div>
 
                 <div className="grid gap-5">
@@ -918,6 +1210,7 @@ function BoardPage() {
     useState<SavedViewListResponse | null>(null);
   const [settingsResponse, setSettingsResponse] =
     useState<SettingsResponse | null>(null);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
   const [issuesResponse, setIssuesResponse] =
     useState<IssueListResponse | null>(null);
   const [globalSkillsResponse, setGlobalSkillsResponse] =
@@ -951,6 +1244,8 @@ function BoardPage() {
   const [loadingSettings, setLoadingSettings] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
   const [runningSync, setRunningSync] = useState(false);
+  const [syncRefreshToken, setSyncRefreshToken] = useState(0);
+  const [onboardingSyncStarted, setOnboardingSyncStarted] = useState(false);
   const [exportingMultica, setExportingMultica] = useState(false);
   const [exportMessage, setExportMessage] = useState<string | null>(null);
   const [filters, setFilters] = useState<IssueFilters>({
@@ -971,10 +1266,11 @@ function BoardPage() {
 
     async function loadInitialData() {
       try {
-        const [projects, views, settings] = await Promise.all([
+        const [projects, views, settings, status] = await Promise.all([
           fetchJson<ProjectListResponse>('/projects'),
           fetchJson<SavedViewListResponse>('/views'),
           fetchJson<SettingsResponse>('/settings'),
+          fetchJson<SyncStatusResponse>('/sync/status'),
         ]);
 
         if (!mounted) {
@@ -984,6 +1280,7 @@ function BoardPage() {
         setProjectsResponse(projects);
         setSavedViewsResponse(views);
         setSettingsResponse(settings);
+        setSyncStatus(status.status);
         setSettingsForm({
           baseUrl: settings.parser.baseUrl ?? '',
           model: settings.parser.model ?? '',
@@ -1017,6 +1314,53 @@ function BoardPage() {
     media.addEventListener('change', syncViewport);
 
     return () => media.removeEventListener('change', syncViewport);
+  }, []);
+
+  useEffect(() => {
+    if (typeof WebSocket === 'undefined') {
+      return;
+    }
+
+    let closed = false;
+    let socket: WebSocket | null = null;
+
+    void resolveSyncStatusWebSocketUrl()
+      .then((url) => {
+        if (closed) {
+          return;
+        }
+
+        socket = new WebSocket(url);
+        socket.onmessage = (event) => {
+          try {
+            const payload = JSON.parse(String(event.data)) as {
+              type?: string;
+              status?: SyncStatus;
+            };
+            if (payload.type !== 'sync-status' || !payload.status) {
+              return;
+            }
+
+            setSyncStatus(payload.status);
+            if (
+              payload.status.phase === 'completed' ||
+              payload.status.phase === 'failed'
+            ) {
+              setSyncRefreshToken((current) => current + 1);
+            }
+          } catch {
+            // Ignore malformed status events; the HTTP fallback still works.
+          }
+        };
+      })
+      .catch(() => {
+        // The status route is also read during normal data refreshes.
+      });
+
+    return () => {
+      closed = true;
+      socket?.close();
+    };
   }, []);
 
   useEffect(() => {
@@ -1143,6 +1487,71 @@ function BoardPage() {
     };
   }, [selectedProjectId, mainView, projectTab]);
 
+  useEffect(() => {
+    if (syncRefreshToken === 0) {
+      return;
+    }
+
+    let mounted = true;
+
+    async function refreshAfterSync() {
+      try {
+        const [projects, settings, status] = await Promise.all([
+          fetchJson<ProjectListResponse>('/projects'),
+          fetchJson<SettingsResponse>('/settings'),
+          fetchJson<SyncStatusResponse>('/sync/status'),
+        ]);
+
+        if (!mounted) {
+          return;
+        }
+
+        setProjectsResponse(projects);
+        setSettingsResponse(settings);
+        setSyncStatus(status.status);
+        setSettingsForm((current) => ({
+          ...current,
+          baseUrl: settings.parser.baseUrl ?? '',
+          model: settings.parser.model ?? '',
+          apiKey: '',
+          apiKeyConfigured: settings.parser.apiKeyConfigured,
+        }));
+        setSelectedProjectId((current) => {
+          if (
+            current &&
+            projects.projects.some((project) => project.id === current)
+          ) {
+            return current;
+          }
+
+          return projects.projects[0]?.id ?? null;
+        });
+
+        if (selectedProjectId) {
+          const search = buildIssueSearchParams(selectedProjectId, filters);
+          const issues = await fetchJson<IssueListResponse>(
+            `/issues?${search.toString()}`,
+          );
+          if (mounted) {
+            setIssuesResponse(issues);
+          }
+        }
+      } catch (loadError) {
+        if (mounted) {
+          setError(
+            loadError instanceof Error ? loadError.message : 'Unknown error',
+          );
+        }
+      }
+    }
+
+    void refreshAfterSync();
+
+    return () => {
+      mounted = false;
+    };
+  }, [syncRefreshToken, selectedProjectId, filters]);
+
   const selectedProject = useMemo(
     () =>
       projectsResponse?.projects.find(
@@ -1198,40 +1607,45 @@ function BoardPage() {
     }
   }
 
-  async function runSync() {
-    setRunningSync(true);
-    setError(null);
-    setExportMessage(null);
+  const runSync = useCallback(
+    async (trigger: SyncTrigger = 'manual') => {
+      setRunningSync(true);
+      setError(null);
+      setExportMessage(null);
 
-    try {
-      const response = await postJson<SyncResponse>('/sync');
-      const [projects, settings] = await Promise.all([
-        fetchJson<ProjectListResponse>('/projects'),
-        fetchJson<SettingsResponse>('/settings'),
-      ]);
-      setProjectsResponse({
-        ...projects,
-        sync: response.sync,
-      });
-      setSettingsResponse(settings);
-      setSettingsForm((current) => ({
-        ...current,
-        baseUrl: settings.parser.baseUrl ?? '',
-        model: settings.parser.model ?? '',
-        apiKey: '',
-        apiKeyConfigured: settings.parser.apiKeyConfigured,
-      }));
-      if (!selectedProjectId) {
-        setSelectedProjectId(projects.projects[0]?.id ?? null);
+      try {
+        const response = await postJson<SyncResponse>('/sync', { trigger });
+        const [projects, settings, status] = await Promise.all([
+          fetchJson<ProjectListResponse>('/projects'),
+          fetchJson<SettingsResponse>('/settings'),
+          fetchJson<SyncStatusResponse>('/sync/status'),
+        ]);
+        setProjectsResponse({
+          ...projects,
+          sync: response.sync,
+        });
+        setSettingsResponse(settings);
+        setSyncStatus(response.status ?? status.status);
+        setSettingsForm((current) => ({
+          ...current,
+          baseUrl: settings.parser.baseUrl ?? '',
+          model: settings.parser.model ?? '',
+          apiKey: '',
+          apiKeyConfigured: settings.parser.apiKeyConfigured,
+        }));
+        if (!selectedProjectId) {
+          setSelectedProjectId(projects.projects[0]?.id ?? null);
+        }
+      } catch (syncError) {
+        setError(
+          syncError instanceof Error ? syncError.message : 'Unknown error',
+        );
+      } finally {
+        setRunningSync(false);
       }
-    } catch (syncError) {
-      setError(
-        syncError instanceof Error ? syncError.message : 'Unknown error',
-      );
-    } finally {
-      setRunningSync(false);
-    }
-  }
+    },
+    [selectedProjectId],
+  );
 
   async function saveCurrentView() {
     const name = window.prompt('Name this view');
@@ -1286,7 +1700,7 @@ function BoardPage() {
     }
   }
 
-  async function saveSettings() {
+  async function saveSettings(options: { closeSettings?: boolean } = {}) {
     setSavingSettings(true);
     setSettingsError(null);
 
@@ -1310,7 +1724,9 @@ function BoardPage() {
         apiKey: '',
         apiKeyConfigured: settings.parser.apiKeyConfigured,
       });
-      setSettingsOpen(false);
+      if (options.closeSettings !== false) {
+        setSettingsOpen(false);
+      }
     } catch (saveError) {
       setSettingsError(
         saveError instanceof Error ? saveError.message : 'Unknown error',
@@ -1325,6 +1741,30 @@ function BoardPage() {
       settingsResponse?.parser.model &&
       settingsResponse?.parser.apiKeyConfigured,
   );
+  const syncActive = runningSync || syncStatus?.state === 'syncing';
+
+  useEffect(() => {
+    const onboarding = settingsResponse?.onboarding;
+    if (!onboarding || onboarding.step !== 'sync') {
+      setOnboardingSyncStarted(false);
+      return;
+    }
+
+    if (
+      onboarding.providerReady &&
+      !onboarding.hasCompletedSync &&
+      !syncActive &&
+      !onboardingSyncStarted
+    ) {
+      setOnboardingSyncStarted(true);
+      void runSync('onboarding');
+    }
+  }, [
+    settingsResponse?.onboarding,
+    syncActive,
+    onboardingSyncStarted,
+    runSync,
+  ]);
 
   function applyParserPreset(preset: keyof typeof PARSER_PRESETS) {
     const next = PARSER_PRESETS[preset];
@@ -1368,6 +1808,34 @@ function BoardPage() {
     } finally {
       setExportingMultica(false);
     }
+  }
+
+  if (!settingsResponse && !error) {
+    return (
+      <main className="grid h-screen place-items-center bg-white text-sm text-notion-muted">
+        Loading workspace...
+      </main>
+    );
+  }
+
+  if (settingsResponse?.onboarding.required) {
+    return (
+      <OnboardingScreen
+        error={settingsError}
+        form={settingsForm}
+        onApplyPreset={applyParserPreset}
+        onChange={(field, value) =>
+          setSettingsForm((current) => ({ ...current, [field]: value }))
+        }
+        onRunSync={() => runSync('onboarding')}
+        onSaveProvider={() => saveSettings({ closeSettings: false })}
+        parserReady={parserReady}
+        saving={savingSettings}
+        syncActive={syncActive}
+        syncError={error ?? syncStatus?.latestError ?? null}
+        syncStatus={syncStatus}
+      />
+    );
   }
 
   return (
@@ -1491,19 +1959,19 @@ function BoardPage() {
 
           <div className="px-2.5 pt-3 grid gap-[1px] border-t border-notion-border/50 shrink-0">
             <button
-              className={`w-full flex items-center gap-2 rounded-md p-1.5 text-[0.875rem] transition-colors ${runningSync ? 'cursor-wait text-notion-muted' : 'hover:bg-notion-hover'} ${showSidebarLabels ? 'text-left' : 'justify-center'}`}
+              className={`w-full flex items-center gap-2 rounded-md p-1.5 text-[0.875rem] transition-colors ${syncActive ? 'cursor-wait text-notion-muted' : 'hover:bg-notion-hover'} ${showSidebarLabels ? 'text-left' : 'justify-center'}`}
               type="button"
               onClick={() => void runSync()}
-              title={runningSync ? 'Syncing' : 'Run Sync'}
-              disabled={runningSync}
+              title={syncActive ? 'Syncing' : 'Run Sync'}
+              disabled={syncActive}
             >
               <RefreshCw
                 size={16}
-                className={runningSync ? 'animate-spin' : undefined}
+                className={syncActive ? 'animate-spin' : undefined}
               />
               {showSidebarLabels && (
                 <span className="w-[176px] shrink-0 overflow-hidden truncate text-left">
-                  {runningSync ? 'Syncing…' : 'Run Sync'}
+                  {syncActive ? 'Syncing…' : 'Run Sync'}
                 </span>
               )}
             </button>
@@ -1543,6 +2011,12 @@ function BoardPage() {
                 </>
               )}
             </div>
+            <SyncStatusPill
+              fallbackSync={
+                settingsResponse?.sync ?? projectsResponse?.sync ?? null
+              }
+              status={syncStatus}
+            />
           </header>
 
           <div className="flex-1 overflow-y-auto">
@@ -1887,7 +2361,7 @@ function BoardPage() {
           setSettingsForm((current) => ({ ...current, [field]: value }))
         }
         onClose={() => setSettingsOpen(false)}
-        onSave={saveSettings}
+        onSave={() => saveSettings()}
         open={settingsOpen}
         parserReady={parserReady}
         sync={settingsResponse?.sync ?? null}

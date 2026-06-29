@@ -57,7 +57,7 @@ const HELP_TEXT = `Usage:
 
 Commands:
   serve
-      Start the backend server and run the initial sync.
+      Start the backend server.
 
   issues export multica
       Create Multica issues from the current local board state.

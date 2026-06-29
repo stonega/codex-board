@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { type ChildProcess, spawn } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { connect } from 'node:net';
 import { dirname, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -10,7 +11,7 @@ const DEFAULT_BACKEND_PORT = 7788;
 const DEFAULT_HOST = '127.0.0.1';
 const LOCAL_NO_PROXY_HOSTS = ['127.0.0.1', 'localhost', '::1'];
 const DEFAULT_READY_TIMEOUT_MS = 30_000;
-const DEFAULT_WEB_PORT = 5173;
+const DEFAULT_WEB_PORT = 5673;
 
 export interface CodexBoardOptions {
   backendPort: number;
@@ -23,6 +24,14 @@ export interface CodexBoardOptions {
 export interface OpenCommand {
   command: string;
   args: string[];
+}
+
+export interface CodexBoardHelpCommand {
+  help: true;
+}
+
+export interface CodexBoardVersionCommand {
+  version: true;
 }
 
 interface LocalBackendRuntime {
@@ -41,14 +50,32 @@ Starts the Codex Boards backend and web app locally, then opens the web UI.
 Options:
   --no-open                  Start locally without opening a browser.
   --backend-port <port>      Backend API port. Default: PORT, CODEX_BOARDS_BACKEND_PORT, or 7788.
-  --web-port <port>          Web UI port. Default: CODEX_BOARDS_WEB_PORT or 5173.
+  --web-port <port>          Web UI port. Default: CODEX_BOARDS_WEB_PORT or 5673.
   --host <host>              Local bind host. Default: CODEX_BOARDS_HOST or 127.0.0.1.
   --ready-timeout-ms <ms>    Startup wait timeout. Default: CODEX_BOARDS_READY_TIMEOUT_MS or 30000.
+  --version, -v, -V          Show the CLI version.
   --help, -h                 Show this help text.
 `;
 
 export function getCodexBoardHelpText(): string {
   return HELP_TEXT;
+}
+
+export function getCodexBoardVersion(): string {
+  const packageJsonPath = resolve(
+    dirname(fileURLToPath(import.meta.url)),
+    '..',
+    'package.json',
+  );
+  const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8')) as {
+    version?: unknown;
+  };
+
+  if (typeof packageJson.version !== 'string') {
+    throw new Error('package.json must define a string version');
+  }
+
+  return packageJson.version;
 }
 
 function parsePort(value: string | undefined, name: string): number {
@@ -81,9 +108,17 @@ function readFlagValue(args: string[], index: number, flag: string): string {
 export function parseCodexBoardArgs(
   args: string[],
   env: Record<string, string | undefined> = process.env,
-): CodexBoardOptions | { help: true } {
+): CodexBoardOptions | CodexBoardHelpCommand | CodexBoardVersionCommand {
   if (args.includes('--help') || args.includes('-h')) {
     return { help: true };
+  }
+
+  if (
+    args.includes('--version') ||
+    args.includes('-v') ||
+    args.includes('-V')
+  ) {
+    return { version: true };
   }
 
   const options: CodexBoardOptions = {
@@ -316,6 +351,11 @@ export async function runCodexBoardCli(args: string[]): Promise<number> {
   const parsed = parseCodexBoardArgs(args);
   if ('help' in parsed) {
     console.log(HELP_TEXT);
+    return 0;
+  }
+
+  if ('version' in parsed) {
+    console.log(getCodexBoardVersion());
     return 0;
   }
 
