@@ -651,22 +651,19 @@ function SettingsModal({
 
   return (
     <Sheet open={open} onClose={onClose} title="Settings" variant="modal">
-      <div className="grid gap-6">
+      <div className="grid gap-4">
         <header className="flex items-start justify-between gap-4">
           <div>
-            <p className="mb-1 text-[0.75rem] font-semibold uppercase tracking-wider text-notion-muted">
+            <p className="text-[0.75rem] font-semibold uppercase tracking-wider text-notion-muted">
               Workspace settings
             </p>
-            <h2 className="text-2xl font-bold tracking-tight text-notion-text">
-              Settings
-            </h2>
           </div>
           <Button onClick={onClose} variant="ghost" size="sm">
             <X size={16} />
           </Button>
         </header>
 
-        <div className="grid gap-8 md:grid-cols-[180px_1px_minmax(0,1fr)]">
+        <div className="grid gap-4 md:grid-cols-[180px_1px_minmax(0,1fr)]">
           <aside className="flex flex-col gap-0.5 py-1">
             <button
               className={`flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-[0.875rem] transition-colors ${activeSection === 'parser' ? 'bg-notion-active font-medium text-notion-text' : 'text-notion-muted hover:bg-notion-hover'}`}

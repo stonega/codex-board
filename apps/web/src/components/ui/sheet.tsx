@@ -70,7 +70,7 @@ export function Sheet({
             }
             transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }} // smooth ease-out-expo
           >
-            <div className={variant === 'modal' ? 'p-8 sm:p-10' : 'p-12'}>
+            <div className={variant === 'modal' ? 'p-6 sm:p-8' : 'p-12'}>
               {children}
             </div>
           </motion.aside>
