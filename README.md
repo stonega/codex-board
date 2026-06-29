@@ -4,9 +4,35 @@
 
 It scans Codex session rollouts, keeps Git-backed threads, extracts parent issues and sub-issues, stores the results in SQLite, and renders them in a React/Vite workspace with project navigation, filters, saved views, detail sheets, parser settings, live sync status, first-run onboarding, and local skill catalogs.
 
-## Screenshots
-
 ![Codex Boards usage dashboard](screenshots/usage.png)
+
+## Getting Started
+
+Install dependencies:
+
+```bash
+bun install
+```
+
+Recommended local browser workflow:
+
+```bash
+bun run codex-board
+```
+
+The `codex-board` CLI starts the backend API and Vite web app locally, waits for both ports to become reachable, and opens the web UI. On first open, the UI asks for an OpenAI-compatible parser provider, runs the first sync, and then enters the board. After that, the backend schedules background sync once per minute for newly added or file-updated threads, and the homepage shows live status.
+
+Separate local servers:
+
+```bash
+bun run dev:backend
+bun run dev:web
+```
+
+Default local URLs:
+
+- Web: `http://localhost:5673`
+- Backend: `http://localhost:7788`
 
 ## Current Packages
 
@@ -56,34 +82,6 @@ The web UI supports:
 - project skills catalog discovered from `.codex/skills` and `.agents/skills` inside each project workspace
 - project skill recommendations ranked from issue and thread evidence
 - Multica export from the UI or backend CLI
-
-## Getting Started
-
-Install dependencies:
-
-```bash
-bun install
-```
-
-Recommended local browser workflow:
-
-```bash
-bun run codex-board
-```
-
-The `codex-board` CLI starts the backend API and Vite web app locally, waits for both ports to become reachable, and opens the web UI. On first open, the UI asks for an OpenAI-compatible parser provider, runs the first sync, and then enters the board. After that, the backend schedules background sync once per minute for newly added or file-updated threads, and the homepage shows live status.
-
-Separate local servers:
-
-```bash
-bun run dev:backend
-bun run dev:web
-```
-
-Default local URLs:
-
-- Web: `http://localhost:5673`
-- Backend: `http://localhost:7788`
 
 ## Usage Guide
 
