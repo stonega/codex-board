@@ -1,5 +1,12 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 
 import { describe, expect, test } from 'bun:test';
 
@@ -67,6 +74,7 @@ describe('parser settings', () => {
         apiKey: '  secret-token ',
       }),
     ).toEqual({
+      provider: 'openai-compatible',
       baseUrl: 'http://localhost:11434/v1',
       model: 'qwen2.5-coder:7b',
       apiKeyConfigured: true,
@@ -77,16 +85,47 @@ describe('parser settings', () => {
         model: '   ',
       }),
     ).toEqual({
+      provider: 'openai-compatible',
       baseUrl: 'http://localhost:11434/v1',
       model: null,
       apiKeyConfigured: true,
     });
 
     expect(readParserSettings(config)).toEqual({
+      provider: 'openai-compatible',
       baseUrl: 'http://localhost:11434/v1',
       model: null,
       apiKeyConfigured: true,
     });
+  });
+
+  test('normalizes codex cli parser settings without requiring an api key', () => {
+    const config = {
+      port: 7788,
+      sessionsRoot: '/tmp/codex-sessions',
+      databasePath: '/tmp/codex-boards-test.sqlite',
+      openAiBaseUrl: 'https://api.deepseek.com',
+      openAiApiKey: 'old-secret-token',
+      openAiModel: 'deepseek-v4-flash',
+    };
+
+    expect(
+      updateParserSettings(config, {
+        provider: 'codex-cli',
+        baseUrl: ' https://should-be-ignored.example/v1 ',
+        model: ' gpt-5.4-mini ',
+        apiKey: ' ignored-secret ',
+      }),
+    ).toEqual({
+      provider: 'codex-cli',
+      baseUrl: null,
+      model: 'gpt-5.4-mini',
+      apiKeyConfigured: false,
+    });
+
+    expect(config.openAiBaseUrl).toBeNull();
+    expect(config.openAiApiKey).toBeNull();
+    expect(config.openAiModel).toBe('gpt-5.4-mini');
   });
 
   test('exposes and updates parser settings through the api', async () => {
@@ -206,6 +245,146 @@ describe('parser settings', () => {
       expect(restartedServer.config.openAiApiKey).toBe('persisted-key');
     } finally {
       restartedServer.close();
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test('exposes onboarding state and sync status through the api', async () => {
+    const root = `/tmp/codex-boards-status-${Date.now()}`;
+    mkdirSync(root, { recursive: true });
+
+    const server = createAppServer({
+      port: 7788,
+      sessionsRoot: join(root, 'sessions'),
+      databasePath: join(root, 'boards.sqlite'),
+      openAiBaseUrl: null,
+      openAiApiKey: null,
+      openAiModel: null,
+      syncIntervalMs: 0,
+    });
+
+    try {
+      const settingsResponse = await server.app.request('/api/settings');
+      expect(settingsResponse.status).toBe(200);
+      expect(await settingsResponse.json()).toMatchObject({
+        onboarding: {
+          required: true,
+          step: 'provider',
+          providerReady: false,
+          hasCompletedSync: false,
+        },
+      });
+
+      const statusResponse = await server.app.request('/api/sync/status');
+      expect(statusResponse.status).toBe(200);
+      expect(await statusResponse.json()).toMatchObject({
+        status: {
+          state: 'idle',
+          phase: 'idle',
+          lastSync: null,
+          nextSyncAt: null,
+        },
+      });
+    } finally {
+      server.close();
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test('moves onboarding to sync step after provider setup', async () => {
+    const root = `/tmp/codex-boards-onboarding-${Date.now()}`;
+    mkdirSync(root, { recursive: true });
+
+    const server = createAppServer({
+      port: 7788,
+      sessionsRoot: join(root, 'sessions'),
+      databasePath: join(root, 'boards.sqlite'),
+      openAiBaseUrl: null,
+      openAiApiKey: null,
+      openAiModel: null,
+      syncIntervalMs: 0,
+    });
+
+    try {
+      const response = await server.app.request('/api/settings', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          parser: {
+            baseUrl: ' https://api.deepseek.com ',
+            model: ' deepseek-v4-flash ',
+            apiKey: ' test-key ',
+          },
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        parser: {
+          baseUrl: 'https://api.deepseek.com',
+          model: 'deepseek-v4-flash',
+          apiKeyConfigured: true,
+        },
+        onboarding: {
+          required: true,
+          step: 'sync',
+          providerReady: true,
+          hasCompletedSync: false,
+        },
+      });
+    } finally {
+      server.close();
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test('moves onboarding to sync step for codex cli without an api key', async () => {
+    const root = `/tmp/codex-boards-onboarding-codex-cli-${Date.now()}`;
+    mkdirSync(root, { recursive: true });
+
+    const server = createAppServer({
+      port: 7788,
+      sessionsRoot: join(root, 'sessions'),
+      databasePath: join(root, 'boards.sqlite'),
+      openAiBaseUrl: null,
+      openAiApiKey: null,
+      openAiModel: null,
+      syncIntervalMs: 0,
+    });
+
+    try {
+      const response = await server.app.request('/api/settings', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          parser: {
+            provider: 'codex-cli',
+            model: ' gpt-5.4-mini ',
+          },
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        parser: {
+          provider: 'codex-cli',
+          baseUrl: null,
+          model: 'gpt-5.4-mini',
+          apiKeyConfigured: false,
+        },
+        onboarding: {
+          required: true,
+          step: 'sync',
+          providerReady: true,
+          hasCompletedSync: false,
+        },
+      });
+    } finally {
+      server.close();
       rmSync(root, { force: true, recursive: true });
     }
   });
@@ -599,6 +778,137 @@ describe('parser settings', () => {
     }
   });
 
+  test('parses sync issues with codex cli without output schema or persisted threads', async () => {
+    const root = `/tmp/codex-boards-sync-codex-cli-${Date.now()}`;
+    const sessionsRoot = join(root, 'sessions');
+    const gitWorkspace = '/tmp/codex-boards-fixture';
+    const fakeBin = join(root, 'bin');
+    const fakeCodex = join(fakeBin, 'codex');
+    const fakeArgsPath = join(root, 'codex-args.txt');
+    const fakeStdinPath = join(root, 'codex-stdin.txt');
+    mkdirSync(join(sessionsRoot, '2026', '04', '06'), { recursive: true });
+    mkdirSync(join(gitWorkspace, '.git'), { recursive: true });
+    mkdirSync(fakeBin, { recursive: true });
+
+    writeFileSync(
+      join(sessionsRoot, '2026', '04', '06', 'rollout-sample.jsonl'),
+      readFileSync(
+        join(process.cwd(), 'tests/fixtures/rollout-sample.jsonl'),
+        'utf8',
+      ),
+    );
+    writeFileSync(
+      fakeCodex,
+      `#!/usr/bin/env sh
+args="$*"
+printf '%s\\n' "$args" > "$CODEX_FAKE_ARGS_PATH"
+cat > "$CODEX_FAKE_STDIN_PATH"
+case "$args" in
+  *"--output-schema"*) exit 42 ;;
+esac
+case "$args" in
+  *"--ephemeral"*) ;;
+  *) exit 43 ;;
+esac
+output=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--output-last-message" ]; then
+    shift
+    output="$1"
+  fi
+  shift
+done
+if [ -z "$output" ]; then
+  exit 44
+fi
+cat > "$output" <<'JSON'
+{"parent":{"title":"Parse rollout issues through Codex CLI","summary":"Use Codex CLI as the parser without relying on structured response schema support.","status":"done","priority":"medium","assignee":null,"dueDate":null,"tags":["backend","sync"]},"subIssues":[],"warnings":[]}
+JSON
+`,
+    );
+    chmodSync(fakeCodex, 0o755);
+
+    const originalFakeArgsPath = process.env.CODEX_FAKE_ARGS_PATH;
+    const originalFakeStdinPath = process.env.CODEX_FAKE_STDIN_PATH;
+    const originalCodexCliBin = process.env.CODEX_BOARDS_CODEX_CLI_BIN;
+    process.env.CODEX_BOARDS_CODEX_CLI_BIN = fakeCodex;
+    process.env.CODEX_FAKE_ARGS_PATH = fakeArgsPath;
+    process.env.CODEX_FAKE_STDIN_PATH = fakeStdinPath;
+
+    const server = createAppServer({
+      port: 7788,
+      sessionsRoot,
+      databasePath: join(root, 'boards.sqlite'),
+      parserProvider: 'codex-cli',
+      openAiBaseUrl: null,
+      openAiApiKey: null,
+      openAiModel: 'gpt-5.4-mini',
+    });
+
+    try {
+      const syncResponse = await server.app.request('/api/sync', {
+        method: 'POST',
+      });
+
+      expect(syncResponse.status).toBe(200);
+      expect(await syncResponse.json()).toMatchObject({
+        ok: true,
+        sync: {
+          parserBaseUrl: 'codex-cli',
+          parserModel: 'gpt-5.4-mini',
+          responseModels: ['gpt-5.4-mini'],
+          aiRequestCount: 1,
+          tokenUsage: {
+            promptTokens: 0,
+            completionTokens: 0,
+            totalTokens: 0,
+          },
+          aiParsedIssues: 1,
+        },
+      });
+
+      const args = readFileSync(fakeArgsPath, 'utf8');
+      expect(args).toContain('exec -m gpt-5.4-mini');
+      expect(args).toContain('--ephemeral');
+      expect(args).not.toContain('--output-schema');
+      expect(readFileSync(fakeStdinPath, 'utf8')).toContain(
+        'CODEX_BOARDS_SYNC_PARSER_RUN_DO_NOT_IMPORT',
+      );
+
+      const issuesResponse = await server.app.request(
+        '/api/issues?projectId=codex-boards-fixture',
+      );
+      expect(issuesResponse.status).toBe(200);
+      expect(await issuesResponse.json()).toMatchObject({
+        issues: [
+          {
+            title: 'Parse rollout issues through Codex CLI',
+            parseMode: 'ai',
+          },
+        ],
+      });
+    } finally {
+      if (originalCodexCliBin === undefined) {
+        process.env.CODEX_BOARDS_CODEX_CLI_BIN = undefined;
+      } else {
+        process.env.CODEX_BOARDS_CODEX_CLI_BIN = originalCodexCliBin;
+      }
+      if (originalFakeArgsPath === undefined) {
+        process.env.CODEX_FAKE_ARGS_PATH = undefined;
+      } else {
+        process.env.CODEX_FAKE_ARGS_PATH = originalFakeArgsPath;
+      }
+      if (originalFakeStdinPath === undefined) {
+        process.env.CODEX_FAKE_STDIN_PATH = undefined;
+      } else {
+        process.env.CODEX_FAKE_STDIN_PATH = originalFakeStdinPath;
+      }
+      server.close();
+      rmSync(root, { force: true, recursive: true });
+      rmSync(gitWorkspace, { force: true, recursive: true });
+    }
+  });
+
   test('reparses unchanged files after parser settings change', async () => {
     const root = `/tmp/codex-boards-sync-reparse-${Date.now()}`;
     const sessionsRoot = join(root, 'sessions');
@@ -731,6 +1041,111 @@ describe('parser settings', () => {
       server.close();
       rmSync(root, { force: true, recursive: true });
       rmSync(gitWorkspace, { force: true, recursive: true });
+    }
+  });
+
+  test('skips unchanged rollout files during incremental sync', async () => {
+    const root = `/tmp/codex-boards-incremental-${Date.now()}`;
+    const sessionsRoot = join(root, 'sessions');
+    const gitWorkspace = '/tmp/codex-boards-fixture';
+    mkdirSync(join(sessionsRoot, '2026', '04', '06'), { recursive: true });
+    mkdirSync(join(gitWorkspace, '.git'), { recursive: true });
+
+    writeFileSync(
+      join(sessionsRoot, '2026', '04', '06', 'rollout-sample.jsonl'),
+      readFileSync(
+        join(process.cwd(), 'tests/fixtures/rollout-sample.jsonl'),
+        'utf8',
+      ),
+    );
+
+    const server = createAppServer({
+      port: 7788,
+      sessionsRoot,
+      databasePath: join(root, 'boards.sqlite'),
+      openAiBaseUrl: null,
+      openAiApiKey: null,
+      openAiModel: null,
+      syncIntervalMs: 0,
+    });
+
+    try {
+      const firstSync = await server.app.request('/api/sync', {
+        method: 'POST',
+      });
+      expect(firstSync.status).toBe(200);
+      expect(await firstSync.json()).toMatchObject({
+        sync: {
+          scannedFiles: 1,
+          changedFiles: 1,
+          importedThreads: 1,
+        },
+      });
+
+      const secondSync = await server.app.request('/api/sync', {
+        method: 'POST',
+      });
+      expect(secondSync.status).toBe(200);
+      expect(await secondSync.json()).toMatchObject({
+        sync: {
+          scannedFiles: 1,
+          changedFiles: 0,
+          importedThreads: 0,
+          skippedThreads: 1,
+          parseLog: [
+            {
+              status: 'skipped',
+              message: 'Skipped: rollout file unchanged for current parser.',
+            },
+          ],
+        },
+      });
+
+      const issuesResponse = await server.app.request(
+        '/api/issues?projectId=codex-boards-fixture',
+      );
+      expect(issuesResponse.status).toBe(200);
+      expect(await issuesResponse.json()).toMatchObject({
+        issues: [
+          {
+            title: 'Build a sync service for the board',
+          },
+        ],
+      });
+    } finally {
+      server.close();
+      rmSync(root, { force: true, recursive: true });
+      rmSync(gitWorkspace, { force: true, recursive: true });
+    }
+  });
+
+  test('runs background sync after the first completed sync', async () => {
+    const root = `/tmp/codex-boards-background-sync-${Date.now()}`;
+    mkdirSync(root, { recursive: true });
+
+    const server = createAppServer({
+      port: 7788,
+      sessionsRoot: join(root, 'sessions'),
+      databasePath: join(root, 'boards.sqlite'),
+      openAiBaseUrl: null,
+      openAiApiKey: null,
+      openAiModel: null,
+      syncIntervalMs: 20,
+    });
+
+    try {
+      const firstSync = await server.app.request('/api/sync', {
+        method: 'POST',
+      });
+      expect(firstSync.status).toBe(200);
+
+      await delay(90);
+
+      expect(server.database.listSyncRuns().length).toBeGreaterThan(1);
+      expect(server.syncCoordinator.getStatus().lastSync).not.toBeNull();
+    } finally {
+      server.close();
+      rmSync(root, { force: true, recursive: true });
     }
   });
 
@@ -990,5 +1405,47 @@ describe('rollout parser', () => {
 
     expect(candidate).toBeNull();
     rmSync(tempFile, { force: true });
+  });
+
+  test('ignores accidentally persisted codex cli parser rollouts', () => {
+    const root = `/tmp/codex-boards-parser-self-${Date.now()}`;
+    const workspacePath = join(root, 'workspace');
+    const rolloutPath = join(root, 'rollout-codex-cli-parser.jsonl');
+    mkdirSync(join(workspacePath, '.git'), { recursive: true });
+    writeFileSync(
+      rolloutPath,
+      [
+        JSON.stringify({
+          timestamp: '2026-04-05T05:00:00.000Z',
+          type: 'session_meta',
+          payload: {
+            id: 'thread-parser-self',
+            timestamp: '2026-04-05T04:59:00.000Z',
+            cwd: workspacePath,
+          },
+        }),
+        JSON.stringify({
+          timestamp: '2026-04-05T05:00:01.000Z',
+          type: 'event_msg',
+          payload: {
+            type: 'user_message',
+            message:
+              'Internal marker: CODEX_BOARDS_SYNC_PARSER_RUN_DO_NOT_IMPORT.',
+          },
+        }),
+      ].join('\n'),
+    );
+
+    try {
+      expect(
+        parseRolloutFile({
+          path: rolloutPath,
+          mtimeMs: Date.now(),
+          sizeBytes: 1,
+        }),
+      ).toBeNull();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
   });
 });

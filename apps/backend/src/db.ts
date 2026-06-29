@@ -7,6 +7,7 @@ import type {
   IssueFilters,
   IssueListResponse,
   ParsedIssue,
+  ParserProvider,
   ProjectListResponse,
   ProjectSummary,
   SavedView,
@@ -39,6 +40,14 @@ export interface UsageEventRecord {
   reasoningOutputTokens: number;
   totalTokens: number;
   isArchived: boolean;
+}
+
+export interface SyncFileState {
+  path: string;
+  mtimeMs: number;
+  sizeBytes: number;
+  parserFingerprint: string;
+  threadId: string | null;
 }
 
 export class BoardsDatabase {
@@ -81,6 +90,7 @@ export class BoardsDatabase {
         mtime_ms INTEGER NOT NULL,
         size_bytes INTEGER NOT NULL,
         parser_fingerprint TEXT NOT NULL DEFAULT 'fallback-only',
+        thread_id TEXT,
         synced_at TEXT NOT NULL
       );
 
@@ -194,6 +204,9 @@ export class BoardsDatabase {
     const hasParserFingerprintColumn = syncFileColumns.some(
       (column) => column.name === 'parser_fingerprint',
     );
+    const hasThreadIdColumn = syncFileColumns.some(
+      (column) => column.name === 'thread_id',
+    );
 
     if (!hasParseLogColumn) {
       this.db.exec(
@@ -244,6 +257,10 @@ export class BoardsDatabase {
         "ALTER TABLE sync_files ADD COLUMN parser_fingerprint TEXT NOT NULL DEFAULT 'fallback-only'",
       );
     }
+
+    if (!hasThreadIdColumn) {
+      this.db.exec('ALTER TABLE sync_files ADD COLUMN thread_id TEXT');
+    }
   }
 
   close(): void {
@@ -251,6 +268,7 @@ export class BoardsDatabase {
   }
 
   readParserSettings(): {
+    provider?: ParserProvider | null;
     baseUrl: string | null;
     model: string | null;
     apiKey: string | null;
@@ -266,6 +284,7 @@ export class BoardsDatabase {
     }
 
     return parseJson<{
+      provider?: ParserProvider | null;
       baseUrl: string | null;
       model: string | null;
       apiKey: string | null;
@@ -273,6 +292,7 @@ export class BoardsDatabase {
   }
 
   saveParserSettings(settings: {
+    provider: ParserProvider;
     baseUrl: string | null;
     model: string | null;
     apiKey: string | null;
@@ -414,35 +434,65 @@ export class BoardsDatabase {
     mtimeMs: number,
     sizeBytes: number,
     parserFingerprint: string,
+    threadId: string | null,
     syncedAt: string,
   ): void {
     this.db
       .query(
         `
-        INSERT INTO sync_files (path, mtime_ms, size_bytes, parser_fingerprint, synced_at)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO sync_files (path, mtime_ms, size_bytes, parser_fingerprint, thread_id, synced_at)
+        VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(path) DO UPDATE SET
           mtime_ms = excluded.mtime_ms,
           size_bytes = excluded.size_bytes,
           parser_fingerprint = excluded.parser_fingerprint,
+          thread_id = excluded.thread_id,
           synced_at = excluded.synced_at
       `,
       )
-      .run(path, mtimeMs, sizeBytes, parserFingerprint, syncedAt);
+      .run(path, mtimeMs, sizeBytes, parserFingerprint, threadId, syncedAt);
   }
 
-  getSyncFileState(
-    path: string,
-  ): { mtimeMs: number; sizeBytes: number; parserFingerprint: string } | null {
+  getSyncFileState(path: string): SyncFileState | null {
     return this.db
       .query(
-        'SELECT mtime_ms as mtimeMs, size_bytes as sizeBytes, parser_fingerprint as parserFingerprint FROM sync_files WHERE path = ?',
+        `
+        SELECT
+          path,
+          mtime_ms as mtimeMs,
+          size_bytes as sizeBytes,
+          parser_fingerprint as parserFingerprint,
+          thread_id as threadId
+        FROM sync_files
+        WHERE path = ?
+      `,
       )
-      .get(path) as {
-      mtimeMs: number;
-      sizeBytes: number;
-      parserFingerprint: string;
-    } | null;
+      .get(path) as SyncFileState | null;
+  }
+
+  listSyncFileStates(): SyncFileState[] {
+    return this.db
+      .query(
+        `
+        SELECT
+          path,
+          mtime_ms as mtimeMs,
+          size_bytes as sizeBytes,
+          parser_fingerprint as parserFingerprint,
+          thread_id as threadId
+        FROM sync_files
+        ORDER BY path ASC
+      `,
+      )
+      .all() as SyncFileState[];
+  }
+
+  deleteSyncFile(path: string): void {
+    this.db.query('DELETE FROM sync_files WHERE path = ?').run(path);
+  }
+
+  deleteIssuesByRolloutPath(path: string): void {
+    this.db.query('DELETE FROM issues WHERE rollout_path = ?').run(path);
   }
 
   upsertProject(project: ProjectSummary): void {
@@ -538,6 +588,20 @@ export class BoardsDatabase {
 
   deleteThreadIssues(threadId: string): void {
     this.db.query('DELETE FROM issues WHERE thread_id = ?').run(threadId);
+  }
+
+  pruneProjectsWithoutIssues(): void {
+    this.db
+      .query(
+        `
+        DELETE FROM projects
+        WHERE id NOT IN (
+          SELECT DISTINCT project_id
+          FROM issues
+        )
+      `,
+      )
+      .run();
   }
 
   saveSyncRun(sync: SyncDiagnostics): void {

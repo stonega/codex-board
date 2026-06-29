@@ -3,8 +3,12 @@ import { randomUUID } from 'node:crypto';
 import type {
   SyncDiagnostics,
   SyncParseLogEntry,
+  SyncPhase,
+  SyncProgress,
+  SyncTrigger,
 } from '../../../packages/domain/src/index';
 
+import { getParserProvider } from './config';
 import type { AppConfig } from './config';
 import type { BoardsDatabase } from './db';
 import {
@@ -13,21 +17,56 @@ import {
   parseRolloutFile,
 } from './rollout-parser';
 
+export interface SyncProgressEvent {
+  phase: SyncPhase;
+  trigger: SyncTrigger;
+  runId: string;
+  startedAt: string;
+  progress: SyncProgress;
+}
+
+export interface SyncOptions {
+  trigger?: SyncTrigger;
+  onProgress?: (event: SyncProgressEvent) => void;
+}
+
+function parserFingerprint(config: AppConfig): string {
+  const provider = getParserProvider(config);
+
+  if (provider === 'codex-cli') {
+    if (!config.openAiModel) {
+      return 'fallback-only';
+    }
+
+    return `codex-cli:${config.openAiModel}:plain-json`;
+  }
+
+  if (!config.openAiBaseUrl || !config.openAiApiKey || !config.openAiModel) {
+    return 'fallback-only';
+  }
+
+  return `openai-compatible:${config.openAiBaseUrl}:${config.openAiModel}:key-configured`;
+}
+
 export class SyncService {
   constructor(
     private readonly database: BoardsDatabase,
     private readonly config: AppConfig,
   ) {}
 
-  async sync(): Promise<SyncDiagnostics> {
+  async sync(options: SyncOptions = {}): Promise<SyncDiagnostics> {
     const startedAt = new Date().toISOString();
     const runId = randomUUID();
+    const trigger = options.trigger ?? 'manual';
     const files = [...listRolloutFiles(this.config.sessionsRoot)].reverse();
-
-    // Always rebuild from scratch from the current session set.
-    this.database.resetImportedData();
-
-    const changedFiles = files.length;
+    const fingerprint = parserFingerprint(this.config);
+    const previousFileStates = new Map(
+      this.database
+        .listSyncFileStates()
+        .map((state) => [state.path, state] as const),
+    );
+    const currentFilePaths = new Set(files.map((file) => file.path));
+    let changedFiles = 0;
     let importedThreads = 0;
     let skippedThreads = 0;
     let aiParsedIssues = 0;
@@ -42,12 +81,105 @@ export class SyncService {
     };
     const errors: string[] = [];
     const parseLog: SyncParseLogEntry[] = [];
+    const progress: SyncProgress = {
+      totalFiles: files.length,
+      scannedFiles: 0,
+      changedFiles: 0,
+      importedThreads: 0,
+      skippedThreads: 0,
+      aiParsedIssues: 0,
+      fallbackIssues: 0,
+      reviewIssues: 0,
+      currentFilePath: null,
+    };
+
+    const emitProgress = (phase: SyncPhase) => {
+      options.onProgress?.({
+        phase,
+        trigger,
+        runId,
+        startedAt,
+        progress: { ...progress },
+      });
+    };
+
+    emitProgress('scanning');
+
+    for (const [path, state] of previousFileStates) {
+      if (currentFilePaths.has(path)) {
+        continue;
+      }
+
+      changedFiles += 1;
+      progress.changedFiles = changedFiles;
+      progress.currentFilePath = path;
+      if (state.threadId) {
+        this.database.deleteThreadIssues(state.threadId);
+      } else {
+        this.database.deleteIssuesByRolloutPath(path);
+      }
+      this.database.deleteSyncFile(path);
+      parseLog.push({
+        filePath: path,
+        threadId: state.threadId,
+        repository: null,
+        parseMode: null,
+        issueCount: 0,
+        status: 'skipped',
+        message: 'Removed: rollout file no longer exists.',
+      });
+      emitProgress('persisting');
+    }
 
     for (const file of files) {
+      progress.scannedFiles += 1;
+      progress.currentFilePath = file.path;
+
       try {
+        const previous = previousFileStates.get(file.path);
+        const unchanged =
+          previous?.mtimeMs === file.mtimeMs &&
+          previous.sizeBytes === file.sizeBytes &&
+          previous.parserFingerprint === fingerprint;
+
+        if (unchanged) {
+          skippedThreads += 1;
+          progress.skippedThreads = skippedThreads;
+          parseLog.push({
+            filePath: file.path,
+            threadId: previous.threadId,
+            repository: null,
+            parseMode: null,
+            issueCount: 0,
+            status: 'skipped',
+            message: 'Skipped: rollout file unchanged for current parser.',
+          });
+          emitProgress('scanning');
+          continue;
+        }
+
+        changedFiles += 1;
+        progress.changedFiles = changedFiles;
+        emitProgress('parsing');
+
+        if (previous?.threadId) {
+          this.database.deleteThreadIssues(previous.threadId);
+        } else {
+          this.database.deleteIssuesByRolloutPath(file.path);
+        }
+
         const candidate = parseRolloutFile(file);
         if (!candidate) {
           skippedThreads += 1;
+          progress.skippedThreads = skippedThreads;
+          this.database.saveSyncFile(
+            file.path,
+            file.mtimeMs,
+            file.sizeBytes,
+            fingerprint,
+            null,
+            new Date().toISOString(),
+          );
           parseLog.push({
             filePath: file.path,
             threadId: null,
@@ -57,10 +189,12 @@ export class SyncService {
             status: 'skipped',
             message: 'Skipped: rollout has no Git workspace evidence.',
           });
+          emitProgress('persisting');
           continue;
         }
 
         const built = await buildIssuesFromCandidate(candidate, {
+          parserProvider: getParserProvider(this.config),
           openAiBaseUrl: this.config.openAiBaseUrl,
           openAiApiKey: this.config.openAiApiKey,
           openAiModel: this.config.openAiModel,
@@ -107,6 +241,18 @@ export class SyncService {
         } else {
           fallbackIssues += built.issues.length;
         }
+        progress.importedThreads = importedThreads;
+        progress.aiParsedIssues = aiParsedIssues;
+        progress.fallbackIssues = fallbackIssues;
+        progress.reviewIssues = reviewIssues;
+        this.database.saveSyncFile(
+          file.path,
+          file.mtimeMs,
+          file.sizeBytes,
+          fingerprint,
+          candidate.threadId,
+          new Date().toISOString(),
+        );
         parseLog.push({
           filePath: file.path,
           threadId: candidate.threadId,
@@ -116,6 +262,7 @@ export class SyncService {
           status: 'imported',
           message: `Imported ${built.issues.length} issue${built.issues.length === 1 ? '' : 's'} via ${built.parseMode} parsing.`,
         });
+        emitProgress('persisting');
       } catch (error) {
         const message =
           error instanceof Error ? error.message : 'Unknown sync error.';
@@ -129,14 +276,21 @@ export class SyncService {
           status: 'error',
           message,
         });
+        emitProgress('parsing');
       }
     }
+
+    progress.currentFilePath = null;
+    this.database.pruneProjectsWithoutIssues();
 
     const sync: SyncDiagnostics = {
       runId,
       startedAt,
       completedAt: new Date().toISOString(),
-      parserBaseUrl: this.config.openAiBaseUrl,
+      parserBaseUrl:
+        getParserProvider(this.config) === 'codex-cli'
+          ? 'codex-cli'
+          : this.config.openAiBaseUrl,
       parserModel: this.config.openAiModel,
       responseModels,
       aiRequestCount,
@@ -154,6 +308,7 @@ export class SyncService {
 
     this.logSyncRun(sync);
     this.database.saveSyncRun(sync);
+    emitProgress('completed');
     return sync;
   }
 

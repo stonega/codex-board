@@ -21,7 +21,7 @@ The domain model is central to both, so it lives in a shared package.
   - Hono API
   - rollout-file sync service
   - SQLite persistence and diagnostics
-  - OpenAI-compatible parse client with heuristic fallback
+  - OpenAI-compatible and Codex CLI parse clients with heuristic fallback
 - `apps/web`
   - React UI
   - Notion-style project/issues workspace
@@ -49,9 +49,10 @@ The first working pipeline now produces:
 - `projects`: inferred groupings derived from repository/workspace metadata
 - `issues`: parent issues plus optional sub-issues
 - `sync runs`: temporary full-resync diagnostics
-  - each run clears imported board data and rebuilds from the current rollout set
+  - each run scans the current rollout set and reparses only new, changed, removed, or parser-fingerprint-changed files
   - each run records a per-file parse log for imported, skipped, and failed rollouts
   - each run also records parser target, resolved response model(s), and token usage totals for auditability
+  - background sync runs once per minute after the first completed sync and publishes live status over WebSocket
 - `skills`: read-only `SKILL.md` files discovered from local Codex, agent, enabled plugin, and selected project skill roots
 - `usage events`: aggregate-only Codex token-count rows from active and archived local session logs
 
@@ -61,9 +62,14 @@ The implementation stays heuristic and inspectable:
 
 - import only Git-backed workspaces
 - deterministically extract branch, commit, and tag evidence from thread/tool output
-- truncate thread text before sending it to an OpenAI-compatible parser
+- truncate thread text before sending it to the configured parser
 - fall back to deterministic issue shaping when AI parsing fails
 - flag low-confidence issues for review instead of hiding uncertainty
+
+The Codex CLI parser path is isolated from normal session ingestion. It runs
+non-interactively with ephemeral execution, reads only the final CLI message,
+does not rely on a response schema, and tags its prompt with an internal marker
+so any accidentally persisted parser session is ignored by rollout sync.
 
 Opaque ML classification should not be the default path until the baseline heuristic layer is stable.
 
@@ -83,11 +89,12 @@ Primary endpoints:
 - `GET /api/issues`
 - `GET /api/issues/:id`
 - `POST /api/sync`
+- `GET /api/sync/status`
 - `GET /api/sync/runs`
 - `GET /api/views`
 - `POST /api/views`
 
-The web UI consumes these endpoints directly and renders project navigation, filterable issue tables, global and project-local skill lists, usage charts, a runtime parser settings sheet with sync history, and right-side detail sheets.
+The web UI consumes these endpoints directly and renders first-run provider onboarding, a first sync progress screen, project navigation, filterable issue tables, global and project-local skill lists, usage charts, a runtime parser settings sheet with sync history, live homepage sync status, and right-side detail sheets.
 
 The usage dashboard follows the same local-first boundary as issue ingestion. It parses only token-count aggregates from local Codex JSONL logs, including archived sessions, and persists no prompts, assistant messages, tool output, command text, patches, or transcript snippets. Estimated USD cost is calculated only from a local pricing JSON file; normal dashboard reads do not fetch pricing from the network.
 

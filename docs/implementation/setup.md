@@ -20,9 +20,24 @@ bun run codex-board
 ```
 
 The `codex-board` CLI starts the backend API and Vite web app locally, waits
-for both to become reachable, then opens the web UI. Use the web UI's sync
-action to refresh local Codex session data. Use `--no-open` when you want to
-start the servers without launching a browser.
+for both to become reachable, then opens the web UI. On first open, the UI
+shows provider setup, then a sync progress screen, then enters the board. Use
+`--no-open` when you want to start the servers without launching a browser.
+From the repository script, pass CLI flags after `--`; for example:
+
+```bash
+bun run codex-board -- --help
+bun run codex-board -- --version
+bun run codex-board -- --clear
+```
+
+When installed as a package executable, the same commands are available as
+`codex-board --help`, `codex-board --version`, and `codex-board --clear`.
+
+Use `--clear` to reset local Codex Boards state before startup. The command
+asks for confirmation, deletes the resolved SQLite database and SQLite sidecar
+files, and leaves the original Codex session history under `~/.codex/sessions`
+untouched.
 
 Backend:
 
@@ -53,12 +68,17 @@ The export command runs a sync first by default, then creates one Multica issue 
 Optional parser configuration:
 
 ```bash
+export CODEX_BOARDS_PARSER_PROVIDER=openai-compatible
 export OPENAI_COMPAT_BASE_URL=http://localhost:11434/v1
 export OPENAI_COMPAT_API_KEY=placeholder
 export OPENAI_COMPAT_MODEL=qwen2.5-coder:7b
 ```
 
-You can also inspect and update the runtime parser settings from the web app's Settings dialog. The dialog updates the backend's OpenAI-compatible parser target, shows recent sync history, and persists both parser settings and sync diagnostics in SQLite for subsequent sync runs and backend restarts.
+For Codex CLI parsing, set `CODEX_BOARDS_PARSER_PROVIDER=codex-cli`; the
+default model is `gpt-5.4-mini`. Set `CODEX_BOARDS_CODEX_CLI_BIN` only when the
+backend should call a non-default `codex` executable path.
+
+You can also inspect and update the runtime parser settings from the web app's Settings dialog. The dialog includes Codex CLI, Gemini, OpenRouter, DeepSeek, and custom provider presets. The Codex CLI preset runs `codex exec` with `gpt-5.4-mini` and parses the plain final message because this path does not use response schemas. Codex CLI sync runs use ephemeral execution and an internal skip marker so parser runs do not get re-imported as new Codex threads. The dialog updates the backend parser target, shows recent sync history, and persists both parser settings and sync diagnostics in SQLite for subsequent sync runs and backend restarts.
 
 ## Initial implementation choices
 
@@ -72,10 +92,13 @@ You can also inspect and update the runtime parser settings from the web app's S
 
 ## Runtime behavior
 
-- The backend scans `~/.codex/sessions` on startup
+- The backend scans `~/.codex/sessions` when sync is requested or scheduled
 - Only Git-backed threads are imported
 - Parsed issues are stored in SQLite under `.tmp/codex-boards.sqlite` by default
-- Sync currently runs as a full rebuild: each sync deletes imported issues, projects, sync cache, and sync history, then reparses the current rollout set from scratch
+- First-run onboarding requires parser provider setup, runs the first sync, then enters the board
+- Sync runs incrementally: new, changed, removed, or parser-fingerprint-changed rollout files are processed; unchanged files are skipped
+- After the first completed sync, the backend schedules background sync every minute by default; set `CODEX_BOARDS_SYNC_INTERVAL_MS=0` to disable it
+- Live sync status is available as JSON or WebSocket at `GET /api/sync/status`
 - If AI parsing is unavailable, fallback issues are still persisted and marked for review
 - Parser settings can be changed at runtime through `GET /api/settings` and `POST /api/settings`, and persisted in SQLite
 - Sync runs persist parser base URL, configured model, resolved response model(s), request counts, token totals, and parse logs in SQLite
