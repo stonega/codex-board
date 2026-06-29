@@ -23,6 +23,11 @@ const EMPTY_PROGRESS: SyncProgress = {
 
 type SyncStatusListener = (status: SyncStatus) => void;
 
+interface SyncRunOptions {
+  trigger?: SyncTrigger;
+  maxThreads?: number;
+}
+
 export class SyncCoordinator {
   private currentRun: Promise<SyncDiagnostics> | null = null;
   private latestError: string | null = null;
@@ -48,11 +53,23 @@ export class SyncCoordinator {
   ) {}
 
   getStatus(): SyncStatus {
+    const lastSync = this.database.getLatestSync();
+    const progress =
+      !lastSync &&
+      this.status.state === 'idle' &&
+      this.status.progress.totalFiles === 0
+        ? {
+            ...this.status.progress,
+            totalFiles: this.syncService.countThreads(),
+          }
+        : this.status.progress;
+
     return {
       generatedAt: new Date().toISOString(),
       ...this.status,
+      progress,
       nextSyncAt: this.nextSyncAt,
-      lastSync: this.database.getLatestSync(),
+      lastSync,
       latestError: this.latestError,
     };
   }
@@ -81,7 +98,17 @@ export class SyncCoordinator {
     }
   }
 
-  run(trigger: SyncTrigger = 'manual'): Promise<SyncDiagnostics> {
+  run(
+    options: SyncTrigger | SyncRunOptions = 'manual',
+  ): Promise<SyncDiagnostics> {
+    const trigger =
+      typeof options === 'string' ? options : (options.trigger ?? 'manual');
+    const requestedMaxThreads =
+      typeof options === 'string' ? undefined : options.maxThreads;
+    const maxThreads = this.database.getLatestSync()
+      ? undefined
+      : requestedMaxThreads;
+
     if (this.currentRun) {
       return this.currentRun;
     }
@@ -95,6 +122,7 @@ export class SyncCoordinator {
     this.currentRun = this.syncService
       .sync({
         trigger,
+        maxThreads,
         onProgress: (event) => {
           this.status = {
             state: 'syncing',

@@ -291,6 +291,51 @@ describe('parser settings', () => {
     }
   });
 
+  test('reports discovered thread count before the first sync', async () => {
+    const root = `/tmp/codex-boards-status-count-${Date.now()}`;
+    const sessionsRoot = join(root, 'sessions');
+    mkdirSync(join(sessionsRoot, '2026', '04', '06'), { recursive: true });
+
+    writeFileSync(
+      join(sessionsRoot, '2026', '04', '06', 'rollout-one.jsonl'),
+      '{"timestamp":"2026-04-05T05:00:00.000Z","type":"session_meta","payload":{"id":"one","timestamp":"2026-04-05T04:59:00.000Z","cwd":"/tmp/no-git"}}\n',
+    );
+    writeFileSync(
+      join(sessionsRoot, '2026', '04', '06', 'rollout-two.jsonl'),
+      '{"timestamp":"2026-04-05T05:01:00.000Z","type":"session_meta","payload":{"id":"two","timestamp":"2026-04-05T05:00:00.000Z","cwd":"/tmp/no-git"}}\n',
+    );
+
+    const server = createAppServer({
+      port: 7788,
+      sessionsRoot,
+      databasePath: join(root, 'boards.sqlite'),
+      openAiBaseUrl: null,
+      openAiApiKey: null,
+      openAiModel: null,
+      syncIntervalMs: 0,
+    });
+
+    try {
+      const statusResponse = await server.app.request('/api/sync/status');
+
+      expect(statusResponse.status).toBe(200);
+      expect(await statusResponse.json()).toMatchObject({
+        status: {
+          state: 'idle',
+          phase: 'idle',
+          lastSync: null,
+          progress: {
+            totalFiles: 2,
+            scannedFiles: 0,
+          },
+        },
+      });
+    } finally {
+      server.close();
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   test('moves onboarding to sync step after provider setup', async () => {
     const root = `/tmp/codex-boards-onboarding-${Date.now()}`;
     mkdirSync(root, { recursive: true });
@@ -491,6 +536,198 @@ describe('parser settings', () => {
       server.close();
       rmSync(root, { force: true, recursive: true });
       rmSync(gitWorkspace, { force: true, recursive: true });
+    }
+  });
+
+  test('limits maxThreads to the first sync only', async () => {
+    const root = `/tmp/codex-boards-sync-limit-${Date.now()}`;
+    const sessionsRoot = join(root, 'sessions');
+    const gitWorkspace = '/tmp/codex-boards-fixture';
+    mkdirSync(join(sessionsRoot, '2026', '04', '05'), { recursive: true });
+    mkdirSync(join(sessionsRoot, '2026', '04', '06'), { recursive: true });
+    mkdirSync(join(gitWorkspace, '.git'), { recursive: true });
+
+    writeFileSync(
+      join(sessionsRoot, '2026', '04', '05', 'rollout-no-git.jsonl'),
+      '{"timestamp":"2026-04-05T05:00:00.000Z","type":"session_meta","payload":{"id":"x","timestamp":"2026-04-05T04:59:00.000Z","cwd":"/tmp/no-git"}}\n',
+    );
+    writeFileSync(
+      join(sessionsRoot, '2026', '04', '06', 'rollout-sample.jsonl'),
+      readFileSync(
+        join(process.cwd(), 'tests/fixtures/rollout-sample.jsonl'),
+        'utf8',
+      ),
+    );
+
+    const server = createAppServer({
+      port: 7788,
+      sessionsRoot,
+      databasePath: join(root, 'boards.sqlite'),
+      openAiBaseUrl: null,
+      openAiApiKey: null,
+      openAiModel: null,
+      syncIntervalMs: 0,
+    });
+
+    try {
+      const firstResponse = await server.app.request('/api/sync', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          trigger: 'onboarding',
+          maxThreads: 1,
+        }),
+      });
+
+      expect(firstResponse.status).toBe(200);
+      expect(await firstResponse.json()).toMatchObject({
+        sync: {
+          scannedFiles: 1,
+          importedThreads: 1,
+          parseLog: [
+            {
+              status: 'imported',
+              repository: 'codex-boards-fixture',
+            },
+          ],
+        },
+      });
+
+      const secondResponse = await server.app.request('/api/sync', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          trigger: 'onboarding',
+          maxThreads: 1,
+        }),
+      });
+
+      expect(secondResponse.status).toBe(200);
+      expect(await secondResponse.json()).toMatchObject({
+        sync: {
+          scannedFiles: 2,
+          importedThreads: 0,
+          skippedThreads: 2,
+        },
+      });
+    } finally {
+      server.close();
+      rmSync(root, { force: true, recursive: true });
+      rmSync(gitWorkspace, { force: true, recursive: true });
+    }
+  });
+
+  test('background sync scans only newly updated rollout files', async () => {
+    const root = `/tmp/codex-boards-background-sync-${Date.now()}`;
+    const sessionsRoot = join(root, 'sessions');
+    const gitWorkspace = join(root, 'workspace');
+    const sessionsDay = join(sessionsRoot, '2026', '04', '06');
+    const firstRolloutPath = join(sessionsDay, 'rollout-alpha.jsonl');
+    const secondRolloutPath = join(sessionsDay, 'rollout-beta.jsonl');
+    mkdirSync(sessionsDay, { recursive: true });
+    mkdirSync(join(gitWorkspace, '.git'), { recursive: true });
+
+    const fixture = readFileSync(
+      join(process.cwd(), 'tests/fixtures/rollout-sample.jsonl'),
+      'utf8',
+    ).replaceAll('/tmp/codex-boards-fixture', gitWorkspace);
+
+    writeFileSync(
+      firstRolloutPath,
+      fixture.replaceAll('thread-abc', 'thread-alpha'),
+    );
+    writeFileSync(
+      secondRolloutPath,
+      fixture
+        .replaceAll('thread-abc', 'thread-beta')
+        .replaceAll(
+          'Build a sync service for the board',
+          'Improve background sync for the board',
+        ),
+    );
+
+    const server = createAppServer({
+      port: 7788,
+      sessionsRoot,
+      databasePath: join(root, 'boards.sqlite'),
+      openAiBaseUrl: null,
+      openAiApiKey: null,
+      openAiModel: null,
+      syncIntervalMs: 0,
+    });
+
+    try {
+      const firstResponse = await server.app.request('/api/sync', {
+        method: 'POST',
+      });
+
+      expect(firstResponse.status).toBe(200);
+      expect(await firstResponse.json()).toMatchObject({
+        sync: {
+          scannedFiles: 2,
+          importedThreads: 2,
+          skippedThreads: 0,
+        },
+      });
+
+      writeFileSync(
+        secondRolloutPath,
+        `${readFileSync(secondRolloutPath, 'utf8')}\n{"timestamp":"2026-04-05T05:00:05.000Z","type":"event_msg","payload":{"type":"user_message","message":"Only this thread changed during automatic sync."}}\n`,
+      );
+
+      const backgroundResponse = await server.app.request('/api/sync', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          trigger: 'background',
+        }),
+      });
+
+      expect(backgroundResponse.status).toBe(200);
+      expect(await backgroundResponse.json()).toMatchObject({
+        sync: {
+          scannedFiles: 1,
+          changedFiles: 1,
+          importedThreads: 1,
+          skippedThreads: 0,
+          parseLog: [
+            {
+              threadId: 'thread-beta',
+              status: 'imported',
+            },
+          ],
+        },
+      });
+
+      const idleBackgroundResponse = await server.app.request('/api/sync', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          trigger: 'background',
+        }),
+      });
+
+      expect(idleBackgroundResponse.status).toBe(200);
+      expect(await idleBackgroundResponse.json()).toMatchObject({
+        sync: {
+          scannedFiles: 0,
+          changedFiles: 0,
+          importedThreads: 0,
+          skippedThreads: 0,
+          parseLog: [],
+        },
+      });
+    } finally {
+      server.close();
+      rmSync(root, { force: true, recursive: true });
     }
   });
 

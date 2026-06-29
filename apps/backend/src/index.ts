@@ -191,13 +191,18 @@ export function createAppServer(config: AppConfig = getConfig()) {
 
   app.get('/api/usage', (context) => {
     const query = context.req.query();
-    return context.json(
-      usageService.summary({
-        preset: query.range ?? query.preset,
-        startDate: query.start ?? query.startDate,
-        endDate: query.end ?? query.endDate,
-      }),
-    );
+    const usageQuery = {
+      preset: query.range ?? query.preset,
+      startDate: query.start ?? query.startDate,
+      endDate: query.end ?? query.endDate,
+    };
+    const summary = usageService.summary(usageQuery);
+
+    if (!summary.refresh.refreshedAt) {
+      return context.json(usageService.refresh(usageQuery).usage);
+    }
+
+    return context.json(summary);
   });
 
   app.post('/api/usage/refresh', (context) => {
@@ -312,7 +317,22 @@ export function createAppServer(config: AppConfig = getConfig()) {
       body.trigger === 'background' || body.trigger === 'onboarding'
         ? body.trigger
         : 'manual';
-    const sync = await syncCoordinator.run(trigger);
+    const maxThreads =
+      body.maxThreads === undefined || body.maxThreads === null
+        ? undefined
+        : Number(body.maxThreads);
+
+    if (
+      maxThreads !== undefined &&
+      (!Number.isInteger(maxThreads) || maxThreads < 1)
+    ) {
+      return context.json(
+        { message: 'maxThreads must be a positive integer' },
+        400,
+      );
+    }
+
+    const sync = await syncCoordinator.run({ trigger, maxThreads });
     return context.json({
       ok: true,
       sync,

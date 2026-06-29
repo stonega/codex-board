@@ -64,6 +64,63 @@ function writeUsageLog(
 }
 
 describe('usage api', () => {
+  test('builds the usage index on first read', async () => {
+    const root = `/tmp/codex-boards-usage-first-read-${Date.now()}`;
+    const codexHome = join(root, 'codex-home');
+    const sessionsRoot = join(codexHome, 'sessions');
+    mkdirSync(sessionsRoot, { recursive: true });
+
+    writeUsageLog(
+      join(sessionsRoot, 'active.jsonl'),
+      'session-active',
+      '2026-06-01T08:00:00.000Z',
+      {
+        inputTokens: 1000,
+        cachedInputTokens: 300,
+        outputTokens: 200,
+        reasoningOutputTokens: 50,
+        totalTokens: 1200,
+      },
+    );
+
+    const server = createAppServer({
+      port: 7788,
+      sessionsRoot,
+      databasePath: join(root, 'boards.sqlite'),
+      codexHome,
+      openAiBaseUrl: null,
+      openAiApiKey: null,
+      openAiModel: null,
+    });
+
+    try {
+      const response = await server.app.request(
+        '/api/usage?range=custom&start=2026-06-01&end=2026-06-01',
+      );
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        refresh: {
+          scannedFiles: 1,
+          parsedEvents: 1,
+          skippedEvents: 0,
+          includedArchived: true,
+        },
+        summary: {
+          totalTokens: 1200,
+          cachedInputTokens: 300,
+          uncachedInputTokens: 700,
+          reasoningOutputTokens: 50,
+          newThreadCount: 1,
+          eventCount: 1,
+        },
+      });
+    } finally {
+      server.close();
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   test('refreshes aggregate usage from active and archived logs', async () => {
     const root = `/tmp/codex-boards-usage-${Date.now()}`;
     const codexHome = join(root, 'codex-home');

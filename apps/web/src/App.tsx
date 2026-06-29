@@ -50,6 +50,7 @@ import type {
   SkillRecommendationListResponse,
   SkillSummary,
   SyncDiagnostics,
+  SyncRequestPayload,
   SyncResponse,
   SyncStatus,
   SyncStatusResponse,
@@ -675,22 +676,39 @@ function SkillDetailSheet({
 }
 
 function ProviderPresetButtons({
+  form,
   onApplyPreset,
 }: {
+  form: ParserSettingsForm;
   onApplyPreset: (preset: keyof typeof PARSER_PRESETS) => void;
 }) {
+  const normalizeBaseUrl = (value: string) => value.trim().replace(/\/+$/, '');
+
   return (
     <div className="flex flex-wrap gap-2">
-      {Object.entries(PARSER_PRESETS).map(([id, preset]) => (
-        <button
-          key={id}
-          onClick={() => onApplyPreset(id as keyof typeof PARSER_PRESETS)}
-          type="button"
-          className="px-3 py-1.5 rounded border border-notion-border text-[0.875rem] hover:bg-notion-hover transition-colors font-medium text-notion-text bg-white shadow-sm"
-        >
-          {preset.label}
-        </button>
-      ))}
+      {Object.entries(PARSER_PRESETS).map(([id, preset]) => {
+        const active =
+          form.provider === preset.provider &&
+          (preset.provider === 'codex-cli' ||
+            normalizeBaseUrl(form.baseUrl) ===
+              normalizeBaseUrl(preset.baseUrl));
+
+        return (
+          <button
+            aria-pressed={active}
+            key={id}
+            onClick={() => onApplyPreset(id as keyof typeof PARSER_PRESETS)}
+            type="button"
+            className={`rounded border px-3 py-1.5 text-[0.875rem] font-medium shadow-sm transition-colors ${
+              active
+                ? 'border-notion-blue bg-blue-50 text-blue-800 ring-1 ring-blue-100 hover:bg-blue-100'
+                : 'border-notion-border bg-white text-notion-text hover:bg-notion-hover'
+            }`}
+          >
+            {preset.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -740,8 +758,10 @@ function OnboardingScreen({
   syncStatus,
   syncError,
   syncActive,
+  limitSyncToLatest100,
   onChange,
   onApplyPreset,
+  onLimitSyncToLatest100Change,
   onSaveProvider,
   onRunSync,
 }: {
@@ -752,8 +772,10 @@ function OnboardingScreen({
   syncStatus: SyncStatus | null;
   syncError: string | null;
   syncActive: boolean;
+  limitSyncToLatest100: boolean;
   onChange: (field: 'baseUrl' | 'model' | 'apiKey', value: string) => void;
   onApplyPreset: (preset: keyof typeof PARSER_PRESETS) => void;
+  onLimitSyncToLatest100Change: (value: boolean) => void;
   onSaveProvider: () => Promise<void>;
   onRunSync: () => Promise<void>;
 }) {
@@ -775,6 +797,10 @@ function OnboardingScreen({
           (form.apiKeyConfigured || form.apiKey.trim()),
       )
     : Boolean(form.model.trim());
+  const scanCountLabel =
+    !syncActive && scannedFiles === 0
+      ? `${totalFiles} thread${totalFiles === 1 ? '' : 's'} found`
+      : `${scannedFiles}/${totalFiles} scanned`;
 
   return (
     <main className="min-h-screen bg-white text-notion-text">
@@ -824,7 +850,10 @@ function OnboardingScreen({
                   </p>
                 </div>
 
-                <ProviderPresetButtons onApplyPreset={onApplyPreset} />
+                <ProviderPresetButtons
+                  form={form}
+                  onApplyPreset={onApplyPreset}
+                />
 
                 <div className="grid gap-4">
                   {providerUsesApiKey ? (
@@ -914,12 +943,32 @@ function OnboardingScreen({
               <div className="grid gap-5">
                 <div>
                   <h2 className="text-lg font-semibold tracking-tight">
-                    Syncing workspace
+                    Sync workspace
                   </h2>
                   <p className="mt-1 text-sm text-notion-muted">
                     Codex Boards is importing local session history.
                   </p>
                 </div>
+
+                <label className="flex items-start gap-3 rounded border border-notion-border bg-notion-sidebar p-3 text-sm">
+                  <input
+                    checked={limitSyncToLatest100}
+                    className="mt-0.5 h-4 w-4 accent-notion-blue"
+                    disabled={syncActive}
+                    onChange={(event) =>
+                      onLimitSyncToLatest100Change(event.target.checked)
+                    }
+                    type="checkbox"
+                  />
+                  <span className="grid gap-0.5">
+                    <span className="font-medium text-notion-text">
+                      Only sync latest 100 threads for first sync
+                    </span>
+                    <span className="text-[0.81rem] text-notion-muted">
+                      Later syncs will scan all local rollout files.
+                    </span>
+                  </span>
+                </label>
 
                 <div className="grid gap-3">
                   <div className="h-2 overflow-hidden rounded-full bg-notion-active">
@@ -929,9 +978,7 @@ function OnboardingScreen({
                     />
                   </div>
                   <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
-                    <Badge>
-                      {scannedFiles}/{totalFiles} scanned
-                    </Badge>
+                    <Badge>{scanCountLabel}</Badge>
                     <Badge>{progress?.changedFiles ?? 0} changed</Badge>
                     <Badge>{progress?.importedThreads ?? 0} imported</Badge>
                     <Badge>{progress?.skippedThreads ?? 0} skipped</Badge>
@@ -949,17 +996,19 @@ function OnboardingScreen({
                   </p>
                 ) : null}
 
-                {!syncActive && !syncStatus?.lastSync ? (
-                  <div className="flex justify-end border-t border-notion-border pt-4">
-                    <Button
-                      onClick={() => void onRunSync()}
-                      className="bg-notion-blue px-4 text-white hover:bg-blue-600"
-                    >
-                      <RefreshCw size={14} />
-                      Start sync
-                    </Button>
-                  </div>
-                ) : null}
+                <div className="flex justify-end border-t border-notion-border pt-4">
+                  <Button
+                    disabled={syncActive}
+                    onClick={() => void onRunSync()}
+                    className="bg-notion-blue px-4 text-white hover:bg-blue-600"
+                  >
+                    <RefreshCw
+                      size={14}
+                      className={syncActive ? 'animate-spin' : undefined}
+                    />
+                    {syncActive ? 'Syncing...' : 'Start sync'}
+                  </Button>
+                </div>
               </div>
             )}
           </section>
@@ -1088,7 +1137,10 @@ function SettingsModal({
                   <span className="text-[0.75rem] font-semibold text-notion-muted uppercase tracking-wider">
                     Presets
                   </span>
-                  <ProviderPresetButtons onApplyPreset={onApplyPreset} />
+                  <ProviderPresetButtons
+                    form={form}
+                    onApplyPreset={onApplyPreset}
+                  />
                 </div>
 
                 <div className="grid gap-5">
@@ -1304,7 +1356,8 @@ function BoardPage() {
   const [savingSettings, setSavingSettings] = useState(false);
   const [runningSync, setRunningSync] = useState(false);
   const [syncRefreshToken, setSyncRefreshToken] = useState(0);
-  const [onboardingSyncStarted, setOnboardingSyncStarted] = useState(false);
+  const [limitOnboardingSyncToLatest100, setLimitOnboardingSyncToLatest100] =
+    useState(false);
   const [exportingMultica, setExportingMultica] = useState(false);
   const [exportMessage, setExportMessage] = useState<string | null>(null);
   const [filters, setFilters] = useState<IssueFilters>({
@@ -1670,13 +1723,21 @@ function BoardPage() {
   }
 
   const runSync = useCallback(
-    async (trigger: SyncTrigger = 'manual') => {
+    async (
+      trigger: SyncTrigger = 'manual',
+      options: { maxThreads?: number } = {},
+    ) => {
       setRunningSync(true);
       setError(null);
       setExportMessage(null);
 
       try {
-        const response = await postJson<SyncResponse>('/sync', { trigger });
+        const payload: SyncRequestPayload = { trigger };
+        if (options.maxThreads !== undefined) {
+          payload.maxThreads = options.maxThreads;
+        }
+
+        const response = await postJson<SyncResponse>('/sync', payload);
         const [projects, settings, status] = await Promise.all([
           fetchJson<ProjectListResponse>('/projects'),
           fetchJson<SettingsResponse>('/settings'),
@@ -1808,29 +1869,6 @@ function BoardPage() {
   const parserReady = isParserSettingsReady(settingsResponse?.parser);
   const syncActive = runningSync || syncStatus?.state === 'syncing';
 
-  useEffect(() => {
-    const onboarding = settingsResponse?.onboarding;
-    if (!onboarding || onboarding.step !== 'sync') {
-      setOnboardingSyncStarted(false);
-      return;
-    }
-
-    if (
-      onboarding.providerReady &&
-      !onboarding.hasCompletedSync &&
-      !syncActive &&
-      !onboardingSyncStarted
-    ) {
-      setOnboardingSyncStarted(true);
-      void runSync('onboarding');
-    }
-  }, [
-    settingsResponse?.onboarding,
-    syncActive,
-    onboardingSyncStarted,
-    runSync,
-  ]);
-
   function applyParserPreset(preset: keyof typeof PARSER_PRESETS) {
     const next = PARSER_PRESETS[preset];
     setSettingsForm((current) => ({
@@ -1891,11 +1929,18 @@ function BoardPage() {
       <OnboardingScreen
         error={settingsError}
         form={settingsForm}
+        limitSyncToLatest100={limitOnboardingSyncToLatest100}
         onApplyPreset={applyParserPreset}
         onChange={(field, value) =>
           setSettingsForm((current) => ({ ...current, [field]: value }))
         }
-        onRunSync={() => runSync('onboarding')}
+        onLimitSyncToLatest100Change={setLimitOnboardingSyncToLatest100}
+        onRunSync={() =>
+          runSync(
+            'onboarding',
+            limitOnboardingSyncToLatest100 ? { maxThreads: 100 } : {},
+          )
+        }
         onSaveProvider={() => saveSettings({ closeSettings: false })}
         parserReady={parserReady}
         saving={savingSettings}
@@ -2026,23 +2071,6 @@ function BoardPage() {
           </div>
 
           <div className="px-2.5 pt-3 grid gap-[1px] border-t border-notion-border/50 shrink-0">
-            <button
-              className={`w-full flex items-center gap-2 rounded-md p-1.5 text-[0.875rem] transition-colors ${syncActive ? 'cursor-wait text-notion-muted' : 'hover:bg-notion-hover'} ${showSidebarLabels ? 'text-left' : 'justify-center'}`}
-              type="button"
-              onClick={() => void runSync()}
-              title={syncActive ? 'Syncing' : 'Run Sync'}
-              disabled={syncActive}
-            >
-              <RefreshCw
-                size={16}
-                className={syncActive ? 'animate-spin' : undefined}
-              />
-              {showSidebarLabels && (
-                <span className="w-[176px] shrink-0 overflow-hidden truncate text-left">
-                  {syncActive ? 'Syncing…' : 'Run Sync'}
-                </span>
-              )}
-            </button>
             <button
               className={`w-full flex items-center gap-2 rounded-md p-1.5 text-[0.875rem] hover:bg-notion-hover transition-colors ${showSidebarLabels ? 'text-left' : 'justify-center'}`}
               type="button"

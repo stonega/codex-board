@@ -10,8 +10,9 @@ import type {
 
 import { getParserProvider } from './config';
 import type { AppConfig } from './config';
-import type { BoardsDatabase } from './db';
+import type { BoardsDatabase, SyncFileState } from './db';
 import {
+  type RolloutFile,
   buildIssuesFromCandidate,
   listRolloutFiles,
   parseRolloutFile,
@@ -27,6 +28,7 @@ export interface SyncProgressEvent {
 
 export interface SyncOptions {
   trigger?: SyncTrigger;
+  maxThreads?: number;
   onProgress?: (event: SyncProgressEvent) => void;
 }
 
@@ -48,24 +50,60 @@ function parserFingerprint(config: AppConfig): string {
   return `openai-compatible:${config.openAiBaseUrl}:${config.openAiModel}:key-configured`;
 }
 
+function hasUpdatedRolloutFile(
+  file: RolloutFile,
+  previous: SyncFileState | undefined,
+): boolean {
+  return (
+    !previous ||
+    previous.mtimeMs !== file.mtimeMs ||
+    previous.sizeBytes !== file.sizeBytes
+  );
+}
+
+function hasSyncRelevantChange(
+  file: RolloutFile,
+  previous: SyncFileState | undefined,
+  fingerprint: string,
+): boolean {
+  return (
+    hasUpdatedRolloutFile(file, previous) ||
+    previous?.parserFingerprint !== fingerprint
+  );
+}
+
 export class SyncService {
   constructor(
     private readonly database: BoardsDatabase,
     private readonly config: AppConfig,
   ) {}
 
+  countThreads(): number {
+    return listRolloutFiles(this.config.sessionsRoot).length;
+  }
+
   async sync(options: SyncOptions = {}): Promise<SyncDiagnostics> {
     const startedAt = new Date().toISOString();
     const runId = randomUUID();
     const trigger = options.trigger ?? 'manual';
-    const files = [...listRolloutFiles(this.config.sessionsRoot)].reverse();
+    const allFiles = [...listRolloutFiles(this.config.sessionsRoot)].reverse();
     const fingerprint = parserFingerprint(this.config);
     const previousFileStates = new Map(
       this.database
         .listSyncFileStates()
         .map((state) => [state.path, state] as const),
     );
-    const currentFilePaths = new Set(files.map((file) => file.path));
+    const candidateFiles =
+      trigger === 'background'
+        ? allFiles.filter((file) =>
+            hasUpdatedRolloutFile(file, previousFileStates.get(file.path)),
+          )
+        : allFiles;
+    const files =
+      options.maxThreads && options.maxThreads > 0
+        ? candidateFiles.slice(0, options.maxThreads)
+        : candidateFiles;
+    const currentFilePaths = new Set(allFiles.map((file) => file.path));
     let changedFiles = 0;
     let importedThreads = 0;
     let skippedThreads = 0;
@@ -137,10 +175,7 @@ export class SyncService {
 
       try {
         const previous = previousFileStates.get(file.path);
-        const unchanged =
-          previous?.mtimeMs === file.mtimeMs &&
-          previous.sizeBytes === file.sizeBytes &&
-          previous.parserFingerprint === fingerprint;
+        const unchanged = !hasSyncRelevantChange(file, previous, fingerprint);
 
         if (unchanged) {
           skippedThreads += 1;

@@ -49,10 +49,11 @@ The first working pipeline now produces:
 - `projects`: inferred groupings derived from repository/workspace metadata
 - `issues`: parent issues plus optional sub-issues
 - `sync runs`: temporary full-resync diagnostics
-  - each run scans the current rollout set and reparses only new, changed, removed, or parser-fingerprint-changed files
+  - manual and onboarding runs scan the current rollout set and reparse only new, changed, removed, or parser-fingerprint-changed files
+  - first-run onboarding can cap the initial scan to the latest 100 rollout files; subsequent manual syncs scan the full rollout set
   - each run records a per-file parse log for imported, skipped, and failed rollouts
   - each run also records parser target, resolved response model(s), and token usage totals for auditability
-  - background sync runs once per minute after the first completed sync and publishes live status over WebSocket
+  - background sync runs once per minute after the first completed sync, queues only newly added or file-updated rollout threads, and publishes live status over WebSocket
 - `skills`: read-only `SKILL.md` files discovered from local Codex, agent, enabled plugin, and selected project skill roots
 - `usage events`: aggregate-only Codex token-count rows from active and archived local session logs
 
@@ -94,7 +95,7 @@ Primary endpoints:
 - `GET /api/views`
 - `POST /api/views`
 
-The web UI consumes these endpoints directly and renders first-run provider onboarding, a first sync progress screen, project navigation, filterable issue tables, global and project-local skill lists, usage charts, a runtime parser settings sheet with sync history, live homepage sync status, and right-side detail sheets.
+The web UI consumes these endpoints directly and renders first-run provider onboarding, a user-started first sync screen with an optional latest-100 thread cap, project navigation, filterable issue tables, global and project-local skill lists, usage charts, a runtime parser settings sheet with sync history, live homepage sync status, and right-side detail sheets.
 
 The usage dashboard follows the same local-first boundary as issue ingestion. It parses only token-count aggregates from local Codex JSONL logs, including archived sessions, and persists no prompts, assistant messages, tool output, command text, patches, or transcript snippets. Estimated USD cost is calculated only from a local pricing JSON file; normal dashboard reads do not fetch pricing from the network.
 

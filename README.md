@@ -37,7 +37,7 @@ The sync pipeline:
 4. Builds a truncated parse payload for each thread.
 5. Extracts a parent issue and optional sub-issues through an OpenAI-compatible parser when configured.
 6. Falls back to deterministic issue shaping when AI parsing is unavailable or fails.
-7. Skips unchanged rollout files on later syncs unless the file or parser fingerprint changed.
+7. Skips unchanged rollout files on later manual syncs unless the file or parser fingerprint changed; automatic background sync only queues newly added or file-updated threads.
 8. Stores projects, issues, Git evidence, parser diagnostics, sync runs, saved views, and settings in SQLite.
 9. Exposes the data through a local HTTP/WebSocket API consumed by the web UI.
 
@@ -67,7 +67,7 @@ Recommended local browser workflow:
 bun run codex-board
 ```
 
-The `codex-board` CLI starts the backend API and Vite web app locally, waits for both ports to become reachable, and opens the web UI. On first open, the UI asks for an OpenAI-compatible parser provider, runs the first sync, and then enters the board. After that, the backend schedules background sync once per minute and the homepage shows live status.
+The `codex-board` CLI starts the backend API and Vite web app locally, waits for both ports to become reachable, and opens the web UI. On first open, the UI asks for an OpenAI-compatible parser provider, runs the first sync, and then enters the board. After that, the backend schedules background sync once per minute for newly added or file-updated threads, and the homepage shows live status.
 
 Separate local servers:
 

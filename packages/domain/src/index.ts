@@ -371,6 +371,7 @@ export interface SyncStatusResponse {
 
 export interface SyncRequestPayload {
   trigger?: SyncTrigger;
+  maxThreads?: number | null;
 }
 
 export interface UpdateSettingsPayload {

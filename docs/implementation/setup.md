@@ -95,17 +95,18 @@ You can also inspect and update the runtime parser settings from the web app's S
 - The backend scans `~/.codex/sessions` when sync is requested or scheduled
 - Only Git-backed threads are imported
 - Parsed issues are stored in SQLite under `.tmp/codex-boards.sqlite` by default
-- First-run onboarding requires parser provider setup, runs the first sync, then enters the board
-- Sync runs incrementally: new, changed, removed, or parser-fingerprint-changed rollout files are processed; unchanged files are skipped
-- After the first completed sync, the backend schedules background sync every minute by default; set `CODEX_BOARDS_SYNC_INTERVAL_MS=0` to disable it
-- Live sync status is available as JSON or WebSocket at `GET /api/sync/status`
+- First-run onboarding requires parser provider setup, lets the user optionally limit the initial import to the latest 100 threads, runs the first sync, then enters the board
+- Manual sync runs incrementally: new, changed, removed, or parser-fingerprint-changed rollout files are processed; unchanged files are skipped
+- The `POST /api/sync` `maxThreads` option is only honored before the first completed sync; later manual syncs scan all rollout files
+- After the first completed sync, the backend schedules background sync every minute by default and only queues newly added or file-updated rollout threads; set `CODEX_BOARDS_SYNC_INTERVAL_MS=0` to disable it
+- Live sync status is available as JSON or WebSocket at `GET /api/sync/status`; before the first sync, `progress.totalFiles` reports the discovered local rollout thread count
 - If AI parsing is unavailable, fallback issues are still persisted and marked for review
 - Parser settings can be changed at runtime through `GET /api/settings` and `POST /api/settings`, and persisted in SQLite
 - Sync runs persist parser base URL, configured model, resolved response model(s), request counts, token totals, and parse logs in SQLite
 - Skills are exposed read-only through `GET /api/skills` and `GET /api/skills/:id`; global discovery reads `${CODEX_HOME:-~/.codex}/skills`, `${AGENTS_HOME:-~/.agents}/skills`, and enabled plugin skill roots from `${CODEX_HOME:-~/.codex}/config.toml`
 - Project skill discovery reads `.codex/skills` and `.agents/skills` under the selected project's `workspacePath`
 - Project skill recommendations are exposed through `GET /api/skills/recommendations?projectId=...`; the backend ranks existing global, plugin, agent, and project-local skills by deterministic overlap with the project's stored issue titles, summaries, tags, warnings, Git evidence, and parse payload previews
-- Usage aggregation is exposed through `GET /api/usage` and `POST /api/usage/refresh`; refresh reads aggregate `token_count` rows from active sessions and `${CODEX_HOME:-~/.codex}/archived_sessions`
+- Usage aggregation is exposed through `GET /api/usage` and `POST /api/usage/refresh`; the first usage read initializes the local index, and refresh reads aggregate `token_count` rows from active sessions and `${CODEX_HOME:-~/.codex}/archived_sessions`
 - Usage pricing is loaded from `${CODEX_BOARDS_USAGE_PRICING_PATH}` when set, otherwise `usage-pricing.json` next to the SQLite database; normal usage reads do not fetch pricing from the network
 - The desktop shell starts the backend on a local loopback port and injects that API base URL into the shared React app at runtime
 - The GNOME shell starts the same backend on a local loopback port and renders the board with native GTK/libadwaita widgets
