@@ -26,6 +26,6 @@ The UI emphasizes reviewability:
 
 After the first completed sync, the backend checks for rollout changes in the background once per minute. Unchanged files are skipped; changed files and parser setting changes are reparsed.
 
-Usage charts read aggregate token counters from local Codex logs, including archived sessions. Estimated fees require a local `usage-pricing.json` file; unpriced models remain visible instead of being hidden from totals.
+Usage charts read aggregate token counters from local Codex logs, including archived sessions. The usage index refreshes automatically after sync runs. Estimated fees require a local `usage-pricing.json` file; unpriced models remain visible instead of being hidden from totals.
 
 The native GNOME app provides the same core workflows with GTK/libadwaita controls: project navigation, saved views, filtering, sync, parser settings, sync history, review toggles, traceability details, sub-issues, and Multica export.

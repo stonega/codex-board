@@ -2148,7 +2148,7 @@ function BoardPage() {
                 </div>
               </>
             ) : mainView === 'usage' ? (
-              <UsagePage />
+              <UsagePage refreshToken={syncRefreshToken} />
             ) : (
               <>
                 <div className="px-12 pt-8 pb-3 flex items-center gap-3">

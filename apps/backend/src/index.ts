@@ -97,8 +97,13 @@ export function createAppServer(config: AppConfig = getConfig()) {
   const database = new BoardsDatabase(config.databasePath);
   applyPersistedParserSettings(config, database.readParserSettings());
   const syncService = new SyncService(database, config);
-  const syncCoordinator = new SyncCoordinator(database, syncService, config);
   const usageService = new UsageService(database, config);
+  const syncCoordinator = new SyncCoordinator(
+    database,
+    syncService,
+    config,
+    usageService,
+  );
   const app = new Hono();
 
   const corsMiddleware = cors();

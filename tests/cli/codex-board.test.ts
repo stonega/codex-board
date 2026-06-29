@@ -13,11 +13,13 @@ import { describe, expect, test } from 'bun:test';
 import {
   confirmAndClearCodexBoardLocalData,
   createLocalUrl,
+  getChildTerminationPid,
   getCodexBoardHelpText,
   getCodexBoardVersion,
   parseCodexBoardArgs,
   resolveOpenCommand,
   runCodexBoardCli,
+  shouldDetachChildProcess,
 } from '../../bin/codex-board.ts';
 
 async function captureConsoleLog(
@@ -34,6 +36,23 @@ async function captureConsoleLog(
     return { exitCode, lines };
   } finally {
     console.log = originalLog;
+  }
+}
+
+async function captureConsoleError(
+  callback: () => Promise<number>,
+): Promise<{ exitCode: number; lines: string[] }> {
+  const originalError = console.error;
+  const lines: string[] = [];
+  console.error = (...args: unknown[]) => {
+    lines.push(args.map(String).join(' '));
+  };
+
+  try {
+    const exitCode = await callback();
+    return { exitCode, lines };
+  } finally {
+    console.error = originalError;
   }
 }
 
@@ -222,6 +241,32 @@ describe('codex-board cli', () => {
     });
   });
 
+  test('fails early with a clear message when the web port is in use', async () => {
+    const blockedPort = 5699;
+    const result = await captureConsoleError(() =>
+      runCodexBoardCli(
+        [
+          '--no-open',
+          '--web-port',
+          String(blockedPort),
+          '--backend-port',
+          '8799',
+        ],
+        {
+          isLocalPortListening: async (url) =>
+            url === createLocalUrl('127.0.0.1', blockedPort),
+        },
+      ),
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.lines).toHaveLength(1);
+    expect(result.lines[0]).toContain(
+      `Web port ${blockedPort} is already in use`,
+    );
+    expect(result.lines[0]).toContain('--web-port <port>');
+  });
+
   test('formats wildcard bind hosts as browser-safe local urls', () => {
     expect(createLocalUrl('0.0.0.0', 5673)).toBe('http://127.0.0.1:5673');
     expect(createLocalUrl('::', 5673, '/api')).toBe(
@@ -242,5 +287,15 @@ describe('codex-board cli', () => {
       command: 'cmd',
       args: ['/c', 'start', '', 'http://127.0.0.1:5673'],
     });
+  });
+
+  test('targets child process groups when terminating POSIX web servers', () => {
+    expect(shouldDetachChildProcess('linux')).toBe(true);
+    expect(getChildTerminationPid(1234, 'linux')).toBe(-1234);
+    expect(shouldDetachChildProcess('darwin')).toBe(true);
+    expect(getChildTerminationPid(1234, 'darwin')).toBe(-1234);
+    expect(shouldDetachChildProcess('win32')).toBe(false);
+    expect(getChildTerminationPid(1234, 'win32')).toBe(1234);
+    expect(getChildTerminationPid(undefined, 'linux')).toBeNull();
   });
 });

@@ -106,7 +106,7 @@ You can also inspect and update the runtime parser settings from the web app's S
 - Skills are exposed read-only through `GET /api/skills` and `GET /api/skills/:id`; global discovery reads `${CODEX_HOME:-~/.codex}/skills`, `${AGENTS_HOME:-~/.agents}/skills`, and enabled plugin skill roots from `${CODEX_HOME:-~/.codex}/config.toml`
 - Project skill discovery reads `.codex/skills` and `.agents/skills` under the selected project's `workspacePath`
 - Project skill recommendations are exposed through `GET /api/skills/recommendations?projectId=...`; the backend ranks existing global, plugin, agent, and project-local skills by deterministic overlap with the project's stored issue titles, summaries, tags, warnings, Git evidence, and parse payload previews
-- Usage aggregation is exposed through `GET /api/usage` and `POST /api/usage/refresh`; the first usage read initializes the local index, and refresh reads aggregate `token_count` rows from active sessions and `${CODEX_HOME:-~/.codex}/archived_sessions`
+- Usage aggregation is exposed through `GET /api/usage` and `POST /api/usage/refresh`; the first usage read initializes the local index, and each successful sync refreshes aggregate `token_count` rows from active sessions and `${CODEX_HOME:-~/.codex}/archived_sessions`
 - Usage pricing is loaded from `${CODEX_BOARDS_USAGE_PRICING_PATH}` when set, otherwise `usage-pricing.json` next to the SQLite database; normal usage reads do not fetch pricing from the network
 - The desktop shell starts the backend on a local loopback port and injects that API base URL into the shared React app at runtime
 - The GNOME shell starts the same backend on a local loopback port and renders the board with native GTK/libadwaita widgets

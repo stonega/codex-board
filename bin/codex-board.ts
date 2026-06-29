@@ -45,9 +45,11 @@ interface LocalBunServer {
 }
 
 export type ConfirmClearLocalData = (message: string) => Promise<string>;
+type LocalPortProbe = (url: string) => Promise<boolean>;
 
 export interface RunCodexBoardCliOptions {
   confirmClearLocalData?: ConfirmClearLocalData;
+  isLocalPortListening?: LocalPortProbe;
 }
 
 export interface ClearLocalDataResult {
@@ -331,6 +333,31 @@ async function waitForLocalPort(url: string, timeoutMs: number): Promise<void> {
   throw new Error(`Timed out waiting for ${url}`);
 }
 
+async function isLocalPortListening(url: string): Promise<boolean> {
+  try {
+    await probeTcp(url);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function assertLocalPortAvailable(
+  name: string,
+  url: string,
+  port: number,
+  flag: string,
+  probe: LocalPortProbe = isLocalPortListening,
+): Promise<void> {
+  if (!(await probe(url))) {
+    return;
+  }
+
+  throw new Error(
+    `${name} port ${port} is already in use at ${url}. Stop the existing service or choose another port with ${flag} <port>.`,
+  );
+}
+
 function createProcessExitPromise(
   name: string,
   child: ChildProcess,
@@ -352,11 +379,30 @@ function createProcessExitPromise(
   });
 }
 
+export function shouldDetachChildProcess(
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  return platform !== 'win32';
+}
+
+export function getChildTerminationPid(
+  childPid: number | undefined,
+  platform: NodeJS.Platform = process.platform,
+): number | null {
+  if (childPid === undefined) {
+    return null;
+  }
+
+  return platform === 'win32' ? childPid : -childPid;
+}
+
 function terminate(child: ChildProcess): void {
   if (!child.killed) {
-    if (process.platform !== 'win32' && child.pid) {
+    const terminationPid = getChildTerminationPid(child.pid);
+
+    if (terminationPid !== null) {
       try {
-        process.kill(-child.pid, 'SIGTERM');
+        process.kill(terminationPid, 'SIGTERM');
         return;
       } catch {
         // Fall back to terminating the child process directly.
@@ -478,6 +524,22 @@ export async function runCodexBoardCli(
   process.once('exit', stopChildren);
 
   try {
+    const portProbe = options.isLocalPortListening ?? isLocalPortListening;
+    await assertLocalPortAvailable(
+      'Web',
+      webUrl,
+      parsed.webPort,
+      '--web-port',
+      portProbe,
+    );
+    await assertLocalPortAvailable(
+      'Backend',
+      backendUrl,
+      parsed.backendPort,
+      '--backend-port',
+      portProbe,
+    );
+
     const [{ createAppServer, serveAppServer }, { getConfig }] =
       await Promise.all([
         import('../apps/backend/src/index.ts'),
@@ -528,7 +590,7 @@ export async function runCodexBoardCli(
       ],
       {
         cwd: webRoot,
-        detached: process.platform !== 'win32',
+        detached: shouldDetachChildProcess(),
         env: webEnv,
         stdio: 'inherit',
       },

@@ -14,12 +14,10 @@ import {
 import type {
   UsageDailyPoint,
   UsageRangePreset,
-  UsageRefreshResponse,
   UsageSummaryResponse,
 } from '@codex-boards/domain';
 
 import { Badge } from './components/ui/badge';
-import { Button } from './components/ui/button';
 import {
   Card,
   CardContent,
@@ -85,16 +83,6 @@ async function fetchUsage(path: string): Promise<UsageSummaryResponse> {
   }
 
   return (await response.json()) as UsageSummaryResponse;
-}
-
-async function refreshUsage(path: string): Promise<UsageRefreshResponse> {
-  const apiBaseUrl = await resolveApiBaseUrl();
-  const response = await fetch(`${apiBaseUrl}${path}`, { method: 'POST' });
-  if (!response.ok) {
-    throw new Error(`Request failed with ${response.status}`);
-  }
-
-  return (await response.json()) as UsageRefreshResponse;
 }
 
 function buildUsagePath(
@@ -232,7 +220,7 @@ function LineChartCard({
   );
 }
 
-export function UsagePage() {
+export function UsagePage({ refreshToken = 0 }: { refreshToken?: number }) {
   const defaultEndDate = useMemo(() => todayDateKey(), []);
   const defaultStartDate = useMemo(
     () => shiftDateKey(defaultEndDate, -6),
@@ -243,13 +231,19 @@ export function UsagePage() {
   const [customStartDate, setCustomStartDate] = useState(defaultStartDate);
   const [customEndDate, setCustomEndDate] = useState(defaultEndDate);
   const [usage, setUsage] = useState<UsageSummaryResponse | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const usagePath = useMemo(
-    () => buildUsagePath('/usage', rangePreset, customStartDate, customEndDate),
-    [rangePreset, customStartDate, customEndDate],
+  const usageRequest = useMemo(
+    () => ({
+      path: buildUsagePath(
+        '/usage',
+        rangePreset,
+        customStartDate,
+        customEndDate,
+      ),
+      refreshToken,
+    }),
+    [rangePreset, customStartDate, customEndDate, refreshToken],
   );
 
   useEffect(() => {
@@ -258,10 +252,9 @@ export function UsagePage() {
     }
 
     let mounted = true;
-    setLoading(true);
     setError(null);
 
-    void fetchUsage(usagePath)
+    void fetchUsage(usageRequest.path)
       .then((payload) => {
         if (mounted) {
           setUsage(payload);
@@ -273,39 +266,12 @@ export function UsagePage() {
             loadError instanceof Error ? loadError.message : 'Unknown error',
           );
         }
-      })
-      .finally(() => {
-        if (mounted) {
-          setLoading(false);
-        }
       });
 
     return () => {
       mounted = false;
     };
-  }, [usagePath, rangePreset, customStartDate, customEndDate]);
-
-  async function runUsageRefresh() {
-    setRefreshing(true);
-    setError(null);
-    try {
-      const response = await refreshUsage(
-        buildUsagePath(
-          '/usage/refresh',
-          rangePreset,
-          customStartDate,
-          customEndDate,
-        ),
-      );
-      setUsage(response.usage);
-    } catch (refreshError) {
-      setError(
-        refreshError instanceof Error ? refreshError.message : 'Unknown error',
-      );
-    } finally {
-      setRefreshing(false);
-    }
-  }
+  }, [usageRequest, rangePreset, customStartDate, customEndDate]);
 
   const daily = usage?.daily ?? [];
 
@@ -356,18 +322,6 @@ export function UsagePage() {
               />
             </>
           ) : null}
-          <Button
-            disabled={refreshing}
-            onClick={() => void runUsageRefresh()}
-            size="sm"
-            variant="outline"
-          >
-            <RefreshCw
-              data-icon="inline-start"
-              className={refreshing ? 'animate-spin size-3' : 'size-3'}
-            />
-            {refreshing ? 'Refreshing...' : 'Refresh usage'}
-          </Button>
         </div>
       </div>
 

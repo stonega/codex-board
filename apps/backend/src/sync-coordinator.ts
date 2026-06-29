@@ -8,6 +8,7 @@ import type {
 import type { AppConfig } from './config';
 import type { BoardsDatabase } from './db';
 import type { SyncService } from './sync-service';
+import type { UsageService } from './usage';
 
 const EMPTY_PROGRESS: SyncProgress = {
   totalFiles: 0,
@@ -50,6 +51,7 @@ export class SyncCoordinator {
     private readonly database: BoardsDatabase,
     private readonly syncService: SyncService,
     private readonly config: AppConfig,
+    private readonly usageService: UsageService | null = null,
   ) {}
 
   getStatus(): SyncStatus {
@@ -138,6 +140,14 @@ export class SyncCoordinator {
         },
       })
       .then((sync) => {
+        try {
+          this.usageService?.refresh();
+        } catch (error) {
+          console.warn(
+            '[usage:refresh]',
+            error instanceof Error ? error.message : String(error),
+          );
+        }
         this.latestError = null;
         this.status = {
           state: 'idle',

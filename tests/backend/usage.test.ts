@@ -64,6 +64,56 @@ function writeUsageLog(
 }
 
 describe('usage api', () => {
+  test('refreshes aggregate usage after sync runs', async () => {
+    const root = `/tmp/codex-boards-usage-sync-${Date.now()}`;
+    const codexHome = join(root, 'codex-home');
+    const sessionsRoot = join(codexHome, 'sessions');
+    mkdirSync(sessionsRoot, { recursive: true });
+
+    writeUsageLog(
+      join(sessionsRoot, 'active.jsonl'),
+      'session-active',
+      '2026-06-01T08:00:00.000Z',
+      {
+        inputTokens: 1000,
+        cachedInputTokens: 300,
+        outputTokens: 200,
+        reasoningOutputTokens: 50,
+        totalTokens: 1200,
+      },
+    );
+
+    const server = createAppServer({
+      port: 7788,
+      sessionsRoot,
+      databasePath: join(root, 'boards.sqlite'),
+      codexHome,
+      openAiBaseUrl: null,
+      openAiApiKey: null,
+      openAiModel: null,
+      syncIntervalMs: 0,
+    });
+
+    try {
+      expect(server.database.readUsageRefresh().refreshedAt).toBeNull();
+
+      const syncResponse = await server.app.request('/api/sync', {
+        method: 'POST',
+      });
+
+      expect(syncResponse.status).toBe(200);
+      expect(server.database.readUsageRefresh()).toMatchObject({
+        scannedFiles: 1,
+        parsedEvents: 1,
+        skippedEvents: 0,
+        includedArchived: true,
+      });
+    } finally {
+      server.close();
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   test('builds the usage index on first read', async () => {
     const root = `/tmp/codex-boards-usage-first-read-${Date.now()}`;
     const codexHome = join(root, 'codex-home');
