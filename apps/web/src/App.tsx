@@ -39,6 +39,7 @@ import type {
   IssuePriority,
   IssueStatus,
   ParsedIssue,
+  ParserProvider,
   ProjectListResponse,
   SavedViewListResponse,
   SettingsResponse,
@@ -84,26 +85,55 @@ const PRIORITY_OPTIONS: Array<IssuePriority | 'all'> = [
   'low',
   'unknown',
 ];
+
+type ParserPreset = {
+  label: string;
+  provider: ParserProvider;
+  baseUrl: string;
+  model: string;
+  apiKeyRequired: boolean;
+};
+
 const PARSER_PRESETS = {
+  codexCli: {
+    label: 'Codex CLI',
+    provider: 'codex-cli',
+    baseUrl: '',
+    model: 'gpt-5.4-mini',
+    apiKeyRequired: false,
+  },
   gemini: {
     label: 'Gemini',
+    provider: 'openai-compatible',
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/',
     model: 'gemini-3-flash-preview',
+    apiKeyRequired: true,
   },
   openrouter: {
     label: 'OpenRouter',
+    provider: 'openai-compatible',
     baseUrl: 'https://openrouter.ai/api/v1',
     model: 'openai/gpt-4.1-mini',
+    apiKeyRequired: true,
   },
   deepseek: {
     label: 'DeepSeek',
+    provider: 'openai-compatible',
     baseUrl: 'https://api.deepseek.com',
     model: 'deepseek-v4-flash',
+    apiKeyRequired: true,
   },
-} as const;
+} as const satisfies Record<string, ParserPreset>;
 
 type MainView = 'project' | 'skills' | 'usage';
 type ProjectTab = 'issues' | 'skills';
+type ParserSettingsForm = {
+  provider: ParserProvider;
+  baseUrl: string;
+  model: string;
+  apiKey: string;
+  apiKeyConfigured: boolean;
+};
 
 const SIDEBAR_EXPANDED_WIDTH = 240;
 const SIDEBAR_COLLAPSED_WIDTH = 64;
@@ -112,6 +142,20 @@ function formatLabel(value: string): string {
   return value
     .replace(/_/g, ' ')
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function isParserSettingsReady(
+  parser: SettingsResponse['parser'] | null | undefined,
+): boolean {
+  if (!parser) {
+    return false;
+  }
+
+  if (parser.provider === 'codex-cli') {
+    return Boolean(parser.model);
+  }
+
+  return Boolean(parser.baseUrl && parser.model && parser.apiKeyConfigured);
 }
 
 const TAG_BADGE_CLASSES = [
@@ -701,12 +745,7 @@ function OnboardingScreen({
   onSaveProvider,
   onRunSync,
 }: {
-  form: {
-    baseUrl: string;
-    model: string;
-    apiKey: string;
-    apiKeyConfigured: boolean;
-  };
+  form: ParserSettingsForm;
   parserReady: boolean;
   saving: boolean;
   error: string | null;
@@ -728,6 +767,14 @@ function OnboardingScreen({
         ? 12
         : 0;
   const providerStepActive = !parserReady;
+  const providerUsesApiKey = form.provider === 'openai-compatible';
+  const providerCanContinue = providerUsesApiKey
+    ? Boolean(
+        form.baseUrl.trim() &&
+          form.model.trim() &&
+          (form.apiKeyConfigured || form.apiKey.trim()),
+      )
+    : Boolean(form.model.trim());
 
   return (
     <main className="min-h-screen bg-white text-notion-text">
@@ -751,7 +798,7 @@ function OnboardingScreen({
             >
               <p className="font-semibold">1. Provider</p>
               <p className="mt-1 text-[0.81rem] opacity-80">
-                Configure an OpenAI-compatible parser.
+                Configure a parser provider.
               </p>
             </div>
             <div
@@ -780,23 +827,30 @@ function OnboardingScreen({
                 <ProviderPresetButtons onApplyPreset={onApplyPreset} />
 
                 <div className="grid gap-4">
-                  <div className="grid gap-1.5">
-                    <label
-                      className="text-[0.75rem] font-semibold text-notion-muted uppercase tracking-wider"
-                      htmlFor="onboarding-baseUrl"
-                    >
-                      Base URL
-                    </label>
-                    <Input
-                      id="onboarding-baseUrl"
-                      onChange={(event) =>
-                        onChange('baseUrl', event.target.value)
-                      }
-                      placeholder="https://api.deepseek.com"
-                      value={form.baseUrl}
-                      className="w-full bg-notion-sidebar border border-notion-border focus:bg-white focus:border-notion-blue transition-all"
-                    />
-                  </div>
+                  {providerUsesApiKey ? (
+                    <div className="grid gap-1.5">
+                      <label
+                        className="text-[0.75rem] font-semibold text-notion-muted uppercase tracking-wider"
+                        htmlFor="onboarding-baseUrl"
+                      >
+                        Base URL
+                      </label>
+                      <Input
+                        id="onboarding-baseUrl"
+                        onChange={(event) =>
+                          onChange('baseUrl', event.target.value)
+                        }
+                        placeholder="https://api.deepseek.com"
+                        value={form.baseUrl}
+                        className="w-full bg-notion-sidebar border border-notion-border focus:bg-white focus:border-notion-blue transition-all"
+                      />
+                    </div>
+                  ) : (
+                    <p className="rounded border border-notion-border bg-notion-sidebar p-3 text-sm text-notion-muted">
+                      Codex CLI returns a plain final message, so sync extracts
+                      JSON from that text instead of sending a response schema.
+                    </p>
+                  )}
                   <div className="grid gap-1.5">
                     <label
                       className="text-[0.75rem] font-semibold text-notion-muted uppercase tracking-wider"
@@ -814,28 +868,30 @@ function OnboardingScreen({
                       className="w-full bg-notion-sidebar border border-notion-border focus:bg-white focus:border-notion-blue transition-all"
                     />
                   </div>
-                  <div className="grid gap-1.5">
-                    <label
-                      className="text-[0.75rem] font-semibold text-notion-muted uppercase tracking-wider"
-                      htmlFor="onboarding-apiKey"
-                    >
-                      API key
-                    </label>
-                    <Input
-                      id="onboarding-apiKey"
-                      onChange={(event) =>
-                        onChange('apiKey', event.target.value)
-                      }
-                      placeholder={
-                        form.apiKeyConfigured
-                          ? 'Stored already. Enter a new key to replace it.'
-                          : 'Enter API key'
-                      }
-                      type="password"
-                      value={form.apiKey}
-                      className="w-full bg-notion-sidebar border border-notion-border focus:bg-white focus:border-notion-blue transition-all"
-                    />
-                  </div>
+                  {providerUsesApiKey ? (
+                    <div className="grid gap-1.5">
+                      <label
+                        className="text-[0.75rem] font-semibold text-notion-muted uppercase tracking-wider"
+                        htmlFor="onboarding-apiKey"
+                      >
+                        API key
+                      </label>
+                      <Input
+                        id="onboarding-apiKey"
+                        onChange={(event) =>
+                          onChange('apiKey', event.target.value)
+                        }
+                        placeholder={
+                          form.apiKeyConfigured
+                            ? 'Stored already. Enter a new key to replace it.'
+                            : 'Enter API key'
+                        }
+                        type="password"
+                        value={form.apiKey}
+                        className="w-full bg-notion-sidebar border border-notion-border focus:bg-white focus:border-notion-blue transition-all"
+                      />
+                    </div>
+                  ) : null}
                 </div>
 
                 {error ? (
@@ -846,12 +902,7 @@ function OnboardingScreen({
 
                 <div className="flex justify-end border-t border-notion-border pt-4">
                   <Button
-                    disabled={
-                      saving ||
-                      !form.baseUrl.trim() ||
-                      !form.model.trim() ||
-                      (!form.apiKeyConfigured && !form.apiKey.trim())
-                    }
+                    disabled={saving || !providerCanContinue}
                     onClick={() => void onSaveProvider()}
                     className="bg-notion-blue px-4 text-white hover:bg-blue-600"
                   >
@@ -933,12 +984,7 @@ function SettingsModal({
   onApplyPreset,
 }: {
   open: boolean;
-  form: {
-    baseUrl: string;
-    model: string;
-    apiKey: string;
-    apiKeyConfigured: boolean;
-  };
+  form: ParserSettingsForm;
   sync: SyncDiagnostics | null;
   syncHistory: SyncDiagnostics[];
   parserReady: boolean;
@@ -953,6 +999,7 @@ function SettingsModal({
   const [activeSection, setActiveSection] = useState<'parser' | 'history'>(
     'parser',
   );
+  const providerUsesApiKey = form.provider === 'openai-compatible';
 
   return (
     <Sheet open={open} onClose={onClose} title="Settings" variant="modal">
@@ -999,8 +1046,7 @@ function SettingsModal({
                       Parser configuration
                     </h3>
                     <p className="text-sm text-notion-muted">
-                      Configure the OpenAI-compatible parser target used for the
-                      next sync run.
+                      Configure the parser provider used for the next sync run.
                     </p>
                   </div>
 
@@ -1016,14 +1062,18 @@ function SettingsModal({
                     </Badge>
                     <Badge
                       className={
-                        form.apiKeyConfigured
+                        providerUsesApiKey && form.apiKeyConfigured
                           ? 'bg-emerald-50 text-emerald-700 border-emerald-100'
-                          : ''
+                          : !providerUsesApiKey
+                            ? 'bg-emerald-50 text-emerald-700 border-emerald-100'
+                            : ''
                       }
                     >
-                      {form.apiKeyConfigured
-                        ? 'API key configured'
-                        : 'API key missing'}
+                      {providerUsesApiKey
+                        ? form.apiKeyConfigured
+                          ? 'API key configured'
+                          : 'API key missing'
+                        : 'No API key required'}
                     </Badge>
                     {sync ? (
                       <Badge className="bg-notion-active text-notion-muted">
@@ -1042,23 +1092,30 @@ function SettingsModal({
                 </div>
 
                 <div className="grid gap-5">
-                  <div className="grid gap-1.5">
-                    <label
-                      className="text-[0.75rem] font-semibold text-notion-muted uppercase tracking-wider"
-                      htmlFor="settings-baseUrl"
-                    >
-                      Base URL
-                    </label>
-                    <Input
-                      id="settings-baseUrl"
-                      onChange={(event) =>
-                        onChange('baseUrl', event.target.value)
-                      }
-                      placeholder="http://localhost:11434/v1"
-                      value={form.baseUrl}
-                      className="w-full bg-notion-sidebar border border-notion-border focus:bg-white focus:border-notion-blue transition-all"
-                    />
-                  </div>
+                  {providerUsesApiKey ? (
+                    <div className="grid gap-1.5">
+                      <label
+                        className="text-[0.75rem] font-semibold text-notion-muted uppercase tracking-wider"
+                        htmlFor="settings-baseUrl"
+                      >
+                        Base URL
+                      </label>
+                      <Input
+                        id="settings-baseUrl"
+                        onChange={(event) =>
+                          onChange('baseUrl', event.target.value)
+                        }
+                        placeholder="http://localhost:11434/v1"
+                        value={form.baseUrl}
+                        className="w-full bg-notion-sidebar border border-notion-border focus:bg-white focus:border-notion-blue transition-all"
+                      />
+                    </div>
+                  ) : (
+                    <p className="rounded border border-notion-border bg-notion-sidebar p-3 text-sm text-notion-muted">
+                      Codex CLI returns a plain final message, so sync extracts
+                      JSON from that text instead of sending a response schema.
+                    </p>
+                  )}
 
                   <div className="grid gap-1.5">
                     <label
@@ -1078,28 +1135,30 @@ function SettingsModal({
                     />
                   </div>
 
-                  <div className="grid gap-1.5">
-                    <label
-                      className="text-[0.75rem] font-semibold text-notion-muted uppercase tracking-wider"
-                      htmlFor="settings-apiKey"
-                    >
-                      API key
-                    </label>
-                    <Input
-                      id="settings-apiKey"
-                      onChange={(event) =>
-                        onChange('apiKey', event.target.value)
-                      }
-                      placeholder={
-                        form.apiKeyConfigured
-                          ? 'Stored already. Enter a new key to replace it.'
-                          : 'Enter API key'
-                      }
-                      type="password"
-                      value={form.apiKey}
-                      className="w-full bg-notion-sidebar border border-notion-border focus:bg-white focus:border-notion-blue transition-all"
-                    />
-                  </div>
+                  {providerUsesApiKey ? (
+                    <div className="grid gap-1.5">
+                      <label
+                        className="text-[0.75rem] font-semibold text-notion-muted uppercase tracking-wider"
+                        htmlFor="settings-apiKey"
+                      >
+                        API key
+                      </label>
+                      <Input
+                        id="settings-apiKey"
+                        onChange={(event) =>
+                          onChange('apiKey', event.target.value)
+                        }
+                        placeholder={
+                          form.apiKeyConfigured
+                            ? 'Stored already. Enter a new key to replace it.'
+                            : 'Enter API key'
+                        }
+                        type="password"
+                        value={form.apiKey}
+                        className="w-full bg-notion-sidebar border border-notion-border focus:bg-white focus:border-notion-blue transition-all"
+                      />
+                    </div>
+                  ) : null}
                 </div>
 
                 {error ? (
@@ -1255,6 +1314,7 @@ function BoardPage() {
     query: '',
   });
   const [settingsForm, setSettingsForm] = useState({
+    provider: 'openai-compatible' as ParserProvider,
     baseUrl: '',
     model: '',
     apiKey: '',
@@ -1282,6 +1342,7 @@ function BoardPage() {
         setSettingsResponse(settings);
         setSyncStatus(status.status);
         setSettingsForm({
+          provider: settings.parser.provider,
           baseUrl: settings.parser.baseUrl ?? '',
           model: settings.parser.model ?? '',
           apiKey: '',
@@ -1511,6 +1572,7 @@ function BoardPage() {
         setSyncStatus(status.status);
         setSettingsForm((current) => ({
           ...current,
+          provider: settings.parser.provider,
           baseUrl: settings.parser.baseUrl ?? '',
           model: settings.parser.model ?? '',
           apiKey: '',
@@ -1628,6 +1690,7 @@ function BoardPage() {
         setSyncStatus(response.status ?? status.status);
         setSettingsForm((current) => ({
           ...current,
+          provider: settings.parser.provider,
           baseUrl: settings.parser.baseUrl ?? '',
           model: settings.parser.model ?? '',
           apiKey: '',
@@ -1686,6 +1749,7 @@ function BoardPage() {
       const settings = await fetchJson<SettingsResponse>('/settings');
       setSettingsResponse(settings);
       setSettingsForm({
+        provider: settings.parser.provider,
         baseUrl: settings.parser.baseUrl ?? '',
         model: settings.parser.model ?? '',
         apiKey: '',
@@ -1706,12 +1770,16 @@ function BoardPage() {
 
     const payload: UpdateSettingsPayload = {
       parser: {
-        baseUrl: settingsForm.baseUrl,
+        provider: settingsForm.provider,
+        baseUrl:
+          settingsForm.provider === 'codex-cli' ? null : settingsForm.baseUrl,
         model: settingsForm.model,
       },
     };
 
-    if (settingsForm.apiKey.trim() && payload.parser) {
+    if (settingsForm.provider === 'codex-cli' && payload.parser) {
+      payload.parser.apiKey = null;
+    } else if (settingsForm.apiKey.trim() && payload.parser) {
       payload.parser.apiKey = settingsForm.apiKey;
     }
 
@@ -1719,6 +1787,7 @@ function BoardPage() {
       const settings = await postJson<SettingsResponse>('/settings', payload);
       setSettingsResponse(settings);
       setSettingsForm({
+        provider: settings.parser.provider,
         baseUrl: settings.parser.baseUrl ?? '',
         model: settings.parser.model ?? '',
         apiKey: '',
@@ -1736,11 +1805,7 @@ function BoardPage() {
     }
   }
 
-  const parserReady = Boolean(
-    settingsResponse?.parser.baseUrl &&
-      settingsResponse?.parser.model &&
-      settingsResponse?.parser.apiKeyConfigured,
-  );
+  const parserReady = isParserSettingsReady(settingsResponse?.parser);
   const syncActive = runningSync || syncStatus?.state === 'syncing';
 
   useEffect(() => {
@@ -1770,8 +1835,11 @@ function BoardPage() {
     const next = PARSER_PRESETS[preset];
     setSettingsForm((current) => ({
       ...current,
+      provider: next.provider,
       baseUrl: next.baseUrl,
       model: next.model,
+      apiKey: next.apiKeyRequired ? current.apiKey : '',
+      apiKeyConfigured: next.apiKeyRequired ? current.apiKeyConfigured : false,
     }));
   }
 

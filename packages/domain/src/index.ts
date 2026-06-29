@@ -334,7 +334,10 @@ export interface ExportMulticaResponse {
   }>;
 }
 
+export type ParserProvider = 'openai-compatible' | 'codex-cli';
+
 export interface ParserSettings {
+  provider: ParserProvider;
   baseUrl: string | null;
   model: string | null;
   apiKeyConfigured: boolean;
@@ -372,6 +375,7 @@ export interface SyncRequestPayload {
 
 export interface UpdateSettingsPayload {
   parser?: {
+    provider?: ParserProvider;
     baseUrl?: string | null;
     model?: string | null;
     apiKey?: string | null;

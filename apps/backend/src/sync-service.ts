@@ -8,6 +8,7 @@ import type {
   SyncTrigger,
 } from '../../../packages/domain/src/index';
 
+import { getParserProvider } from './config';
 import type { AppConfig } from './config';
 import type { BoardsDatabase } from './db';
 import {
@@ -30,6 +31,16 @@ export interface SyncOptions {
 }
 
 function parserFingerprint(config: AppConfig): string {
+  const provider = getParserProvider(config);
+
+  if (provider === 'codex-cli') {
+    if (!config.openAiModel) {
+      return 'fallback-only';
+    }
+
+    return `codex-cli:${config.openAiModel}:plain-json`;
+  }
+
   if (!config.openAiBaseUrl || !config.openAiApiKey || !config.openAiModel) {
     return 'fallback-only';
   }
@@ -183,6 +194,7 @@ export class SyncService {
         }
 
         const built = await buildIssuesFromCandidate(candidate, {
+          parserProvider: getParserProvider(this.config),
           openAiBaseUrl: this.config.openAiBaseUrl,
           openAiApiKey: this.config.openAiApiKey,
           openAiModel: this.config.openAiModel,
@@ -275,7 +287,10 @@ export class SyncService {
       runId,
       startedAt,
       completedAt: new Date().toISOString(),
-      parserBaseUrl: this.config.openAiBaseUrl,
+      parserBaseUrl:
+        getParserProvider(this.config) === 'codex-cli'
+          ? 'codex-cli'
+          : this.config.openAiBaseUrl,
       parserModel: this.config.openAiModel,
       responseModels,
       aiRequestCount,

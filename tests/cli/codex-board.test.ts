@@ -1,8 +1,17 @@
-import { readFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { describe, expect, test } from 'bun:test';
 
 import {
+  confirmAndClearCodexBoardLocalData,
   createLocalUrl,
   getCodexBoardHelpText,
   getCodexBoardVersion,
@@ -32,6 +41,7 @@ describe('codex-board cli', () => {
   test('uses local defaults', () => {
     expect(parseCodexBoardArgs([], {})).toEqual({
       backendPort: 7788,
+      clearLocalData: false,
       host: '127.0.0.1',
       openBrowser: true,
       readyTimeoutMs: 30000,
@@ -51,9 +61,11 @@ describe('codex-board cli', () => {
         '--ready-timeout-ms',
         '5000',
         '--no-open',
+        '--clear',
       ]),
     ).toEqual({
       backendPort: 7799,
+      clearLocalData: true,
       host: '0.0.0.0',
       openBrowser: false,
       readyTimeoutMs: 5000,
@@ -71,6 +83,7 @@ describe('codex-board cli', () => {
       }),
     ).toEqual({
       backendPort: 8788,
+      clearLocalData: false,
       host: 'localhost',
       openBrowser: true,
       readyTimeoutMs: 10000,
@@ -101,6 +114,7 @@ describe('codex-board cli', () => {
     const helpText = getCodexBoardHelpText();
 
     expect(helpText).toContain('Usage:');
+    expect(helpText).toContain('--clear');
     expect(helpText).toContain('--help, -h');
     expect(helpText).toContain('--version, -v, -V');
   });
@@ -130,6 +144,81 @@ describe('codex-board cli', () => {
     expect(result).toEqual({
       exitCode: 0,
       lines: [getCodexBoardVersion()],
+    });
+  });
+
+  test('cancels clear without deleting local data', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'codex-board-clear-cancel-'));
+    const databasePath = join(root, 'codex-boards.sqlite');
+    writeFileSync(databasePath, 'database');
+
+    try {
+      const result = await confirmAndClearCodexBoardLocalData(
+        databasePath,
+        async (message) => {
+          expect(message).toContain(databasePath);
+          expect(message).toContain(
+            'Codex session history will not be deleted',
+          );
+          return 'no';
+        },
+      );
+
+      expect(result).toEqual({
+        confirmed: false,
+        deletedPaths: [],
+      });
+      expect(existsSync(databasePath)).toBe(true);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test('deletes sqlite local data after exact confirmation', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'codex-board-clear-confirm-'));
+    const databasePath = join(root, 'codex-boards.sqlite');
+    const paths = [
+      databasePath,
+      `${databasePath}-wal`,
+      `${databasePath}-shm`,
+      `${databasePath}-journal`,
+    ];
+    const unrelatedPath = join(root, 'usage-pricing.json');
+
+    for (const path of paths) {
+      writeFileSync(path, 'database');
+    }
+    writeFileSync(unrelatedPath, 'pricing');
+
+    try {
+      const result = await confirmAndClearCodexBoardLocalData(
+        databasePath,
+        async () => ' clear ',
+      );
+
+      expect(result).toEqual({
+        confirmed: true,
+        deletedPaths: paths,
+      });
+      for (const path of paths) {
+        expect(existsSync(path)).toBe(false);
+      }
+      expect(existsSync(unrelatedPath)).toBe(true);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test('aborts startup when clear is not confirmed', async () => {
+    const result = await captureConsoleLog(() =>
+      runCodexBoardCli(['--clear'], {
+        confirmClearLocalData: async () => 'cancel',
+      }),
+    );
+
+    expect(result).toEqual({
+      exitCode: 1,
+      lines: ['Clear cancelled.'],
     });
   });
 

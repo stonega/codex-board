@@ -7,6 +7,7 @@ import type {
   IssueFilters,
   IssueListResponse,
   ParsedIssue,
+  ParserProvider,
   ProjectListResponse,
   ProjectSummary,
   SavedView,
@@ -267,6 +268,7 @@ export class BoardsDatabase {
   }
 
   readParserSettings(): {
+    provider?: ParserProvider | null;
     baseUrl: string | null;
     model: string | null;
     apiKey: string | null;
@@ -282,6 +284,7 @@ export class BoardsDatabase {
     }
 
     return parseJson<{
+      provider?: ParserProvider | null;
       baseUrl: string | null;
       model: string | null;
       apiKey: string | null;
@@ -289,6 +292,7 @@ export class BoardsDatabase {
   }
 
   saveParserSettings(settings: {
+    provider: ParserProvider;
     baseUrl: string | null;
     model: string | null;
     apiKey: string | null;

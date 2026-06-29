@@ -21,7 +21,7 @@ The domain model is central to both, so it lives in a shared package.
   - Hono API
   - rollout-file sync service
   - SQLite persistence and diagnostics
-  - OpenAI-compatible parse client with heuristic fallback
+  - OpenAI-compatible and Codex CLI parse clients with heuristic fallback
 - `apps/web`
   - React UI
   - Notion-style project/issues workspace
@@ -62,9 +62,14 @@ The implementation stays heuristic and inspectable:
 
 - import only Git-backed workspaces
 - deterministically extract branch, commit, and tag evidence from thread/tool output
-- truncate thread text before sending it to an OpenAI-compatible parser
+- truncate thread text before sending it to the configured parser
 - fall back to deterministic issue shaping when AI parsing fails
 - flag low-confidence issues for review instead of hiding uncertainty
+
+The Codex CLI parser path is isolated from normal session ingestion. It runs
+non-interactively with ephemeral execution, reads only the final CLI message,
+does not rely on a response schema, and tags its prompt with an internal marker
+so any accidentally persisted parser session is ignored by rollout sync.
 
 Opaque ML classification should not be the default path until the baseline heuristic layer is stable.
 

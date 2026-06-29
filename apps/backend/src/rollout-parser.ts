@@ -1,5 +1,12 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 
@@ -10,6 +17,7 @@ import {
   type IssueStatus,
   type ParseMode,
   type ParsedIssue,
+  type ParserProvider,
   type ProjectSummary,
   type SyncTokenUsage,
   inferIssuePriority,
@@ -26,6 +34,8 @@ export interface RolloutFile {
   mtimeMs: number;
   sizeBytes: number;
 }
+
+const CODEX_CLI_SYNC_MARKER = 'CODEX_BOARDS_SYNC_PARSER_RUN_DO_NOT_IMPORT';
 
 export interface ThreadMessage {
   role: 'user' | 'assistant' | 'tool';
@@ -499,6 +509,10 @@ export function parseRolloutFile(file: RolloutFile): ThreadCandidate | null {
   const gitTextPool: string[] = grepGitSignals(file.path);
 
   for (const line of lines) {
+    if (line.includes(CODEX_CLI_SYNC_MARKER)) {
+      return null;
+    }
+
     const parsed = JSON.parse(line) as {
       type?: string;
       timestamp?: string;
@@ -573,6 +587,12 @@ export function parseRolloutFile(file: RolloutFile): ThreadCandidate | null {
         }
       }
     }
+  }
+
+  if (
+    messages.some((message) => message.content.includes(CODEX_CLI_SYNC_MARKER))
+  ) {
+    return null;
   }
 
   const focusedMessages = messages
@@ -783,27 +803,7 @@ function buildIssue(params: {
   };
 }
 
-async function parseWithAi(
-  payload: ParsePayload,
-  candidate: ThreadCandidate,
-  options: {
-    baseUrl: string;
-    apiKey: string;
-    model: string;
-  },
-): Promise<{
-  result: AiParseResult;
-  responseModel: string | null;
-  tokenUsage: SyncTokenUsage;
-}> {
-  const requestBody = {
-    model: options.model,
-    temperature: 0.1,
-    response_format: { type: 'json_object' },
-    messages: [
-      {
-        role: 'system',
-        content: `You extract structured engineering issues from coding threads.
+const AI_PARSE_SYSTEM_PROMPT = `You extract structured engineering issues from coding threads.
 
 Your task:
 - Read the thread carefully.
@@ -881,11 +881,117 @@ Quality bar:
 - Be readable.
 - Be deterministic.
 - Preserve the likely intent of the thread.
-- Do not invent facts that are not supported by the thread.`,
+- Do not invent facts that are not supported by the thread.`;
+
+function buildAiParseUserPrompt(
+  payload: ParsePayload,
+  candidate: ThreadCandidate,
+): string {
+  return `Thread metadata:\nrepository=${candidate.git.repository}\nbranch=${candidate.git.branch ?? 'unknown'}\ncommits=${candidate.git.commits.map((commit) => commit.sha).join(', ') || 'none'}\ntags=${candidate.git.tags.join(', ') || 'none'}\n\nThread content:\n${payload.content}`;
+}
+
+function extractJsonObjectFromText(content: string): string {
+  const trimmed = content.trim();
+  if (!trimmed) {
+    throw new Error('AI parse returned an empty response.');
+  }
+
+  try {
+    JSON.parse(trimmed);
+    return trimmed;
+  } catch {
+    // Continue with tolerant extraction below.
+  }
+
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced?.[1]) {
+    const fencedContent = fenced[1].trim();
+    try {
+      JSON.parse(fencedContent);
+      return fencedContent;
+    } catch {
+      // Continue with balanced object extraction below.
+    }
+  }
+
+  const start = trimmed.indexOf('{');
+  if (start === -1) {
+    throw new Error('AI parse did not return a JSON object.');
+  }
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = start; index < trimmed.length; index += 1) {
+    const character = trimmed[index];
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+
+    if (character === '\\') {
+      escaped = true;
+      continue;
+    }
+
+    if (character === '"') {
+      inString = !inString;
+      continue;
+    }
+
+    if (inString) {
+      continue;
+    }
+
+    if (character === '{') {
+      depth += 1;
+      continue;
+    }
+
+    if (character === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        const json = trimmed.slice(start, index + 1);
+        JSON.parse(json);
+        return json;
+      }
+    }
+  }
+
+  throw new Error('AI parse did not return a complete JSON object.');
+}
+
+function parseAiResultContent(content: string): AiParseResult {
+  return JSON.parse(extractJsonObjectFromText(content)) as AiParseResult;
+}
+
+async function parseWithAi(
+  payload: ParsePayload,
+  candidate: ThreadCandidate,
+  options: {
+    baseUrl: string;
+    apiKey: string;
+    model: string;
+  },
+): Promise<{
+  result: AiParseResult;
+  responseModel: string | null;
+  tokenUsage: SyncTokenUsage;
+}> {
+  const requestBody = {
+    model: options.model,
+    temperature: 0.1,
+    response_format: { type: 'json_object' },
+    messages: [
+      {
+        role: 'system',
+        content: AI_PARSE_SYSTEM_PROMPT,
       },
       {
         role: 'user',
-        content: `Thread metadata:\nrepository=${candidate.git.repository}\nbranch=${candidate.git.branch ?? 'unknown'}\ncommits=${candidate.git.commits.map((commit) => commit.sha).join(', ') || 'none'}\ntags=${candidate.git.tags.join(', ') || 'none'}\n\nThread content:\n${payload.content}`,
+        content: buildAiParseUserPrompt(payload, candidate),
       },
     ],
   };
@@ -930,7 +1036,7 @@ Quality bar:
   }
 
   return {
-    result: JSON.parse(content) as AiParseResult,
+    result: parseAiResultContent(content),
     responseModel: json.model ?? null,
     tokenUsage: {
       promptTokens: json.usage?.prompt_tokens ?? 0,
@@ -940,9 +1046,102 @@ Quality bar:
   };
 }
 
+async function parseWithCodexCli(
+  payload: ParsePayload,
+  candidate: ThreadCandidate,
+  options: {
+    model: string;
+  },
+): Promise<{
+  result: AiParseResult;
+  responseModel: string | null;
+  tokenUsage: SyncTokenUsage;
+}> {
+  const outputRoot = mkdtempSync(join(tmpdir(), 'codex-boards-parser-'));
+  const outputPath = join(outputRoot, 'last-message.txt');
+  const prompt = `${AI_PARSE_SYSTEM_PROMPT}
+
+Codex CLI execution rules:
+- Internal marker: ${CODEX_CLI_SYNC_MARKER}.
+- Use only the thread metadata and content below.
+- Do not inspect files, run commands, or modify the workspace.
+- Return the JSON object as the final answer only.
+- Do not wrap the JSON in Markdown.
+
+${buildAiParseUserPrompt(payload, candidate)}`;
+
+  const codexCliBin = process.env.CODEX_BOARDS_CODEX_CLI_BIN ?? 'codex';
+  console.log(
+    `[parse:codex-cli:request] command=${codexCliBin} exec model=${options.model} thread=${candidate.threadId}`,
+  );
+
+  try {
+    const attempt = spawnSync(
+      codexCliBin,
+      [
+        'exec',
+        '-m',
+        options.model,
+        '--sandbox',
+        'read-only',
+        '--ask-for-approval',
+        'never',
+        '--skip-git-repo-check',
+        '--ephemeral',
+        '--color',
+        'never',
+        '--output-last-message',
+        outputPath,
+        '-',
+      ],
+      {
+        cwd: candidate.git.workspacePath || process.cwd(),
+        encoding: 'utf8',
+        env: process.env,
+        input: prompt,
+        maxBuffer: 10 * 1024 * 1024,
+      },
+    );
+
+    if (attempt.error) {
+      throw new Error(
+        `Codex CLI parse failed to start: ${attempt.error.message}`,
+      );
+    }
+
+    if (attempt.status !== 0) {
+      const details = sliceHeadTail(
+        [attempt.stderr, attempt.stdout].filter(Boolean).join('\n').trim(),
+        800,
+      );
+      throw new Error(
+        `Codex CLI parse failed with status ${attempt.status}${details ? `: ${details}` : ''}`,
+      );
+    }
+
+    const content =
+      existsSync(outputPath) && readFileSync(outputPath, 'utf8').trim()
+        ? readFileSync(outputPath, 'utf8')
+        : attempt.stdout;
+
+    return {
+      result: parseAiResultContent(content),
+      responseModel: options.model,
+      tokenUsage: {
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+      },
+    };
+  } finally {
+    rmSync(outputRoot, { force: true, recursive: true });
+  }
+}
+
 export async function buildIssuesFromCandidate(
   candidate: ThreadCandidate,
   options: {
+    parserProvider?: ParserProvider;
     openAiBaseUrl: string | null;
     openAiApiKey: string | null;
     openAiModel: string | null;
@@ -971,24 +1170,32 @@ export async function buildIssuesFromCandidate(
     lastUpdatedAt: candidate.updatedAt,
   };
   const payload = buildParsePayload(candidate);
-  const canUseAi = Boolean(
-    options.openAiBaseUrl && options.openAiApiKey && options.openAiModel,
+  const parserProvider = options.parserProvider ?? 'openai-compatible';
+  const canUseOpenAiCompatible = Boolean(
+    parserProvider === 'openai-compatible' &&
+      options.openAiBaseUrl &&
+      options.openAiApiKey &&
+      options.openAiModel,
+  );
+  const canUseCodexCli = Boolean(
+    parserProvider === 'codex-cli' && options.openAiModel,
   );
 
-  if (canUseAi) {
+  if (canUseOpenAiCompatible || canUseCodexCli) {
     try {
-      const baseUrl = options.openAiBaseUrl;
-      const apiKey = options.openAiApiKey;
       const model = options.openAiModel;
-      if (!baseUrl || !apiKey || !model) {
+      if (!model) {
         throw new Error('Missing AI parser configuration.');
       }
 
-      const ai = await parseWithAi(payload, candidate, {
-        baseUrl,
-        apiKey,
-        model,
-      });
+      const ai =
+        parserProvider === 'codex-cli'
+          ? await parseWithCodexCli(payload, candidate, { model })
+          : await parseWithAi(payload, candidate, {
+              baseUrl: options.openAiBaseUrl ?? '',
+              apiKey: options.openAiApiKey ?? '',
+              model,
+            });
 
       const parent = buildIssue({
         project,

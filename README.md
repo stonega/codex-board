@@ -100,6 +100,7 @@ codex-board
 Useful flags:
 
 - `--no-open`: start servers without opening a browser
+- `--clear`: ask for confirmation, then delete local Codex Boards SQLite data before startup
 - `--backend-port <port>`: backend API port
 - `--web-port <port>`: web UI port
 - `--host <host>`: local bind host
@@ -132,6 +133,8 @@ Runtime paths:
 Optional parser configuration:
 
 ```bash
+CODEX_BOARDS_PARSER_PROVIDER=
+CODEX_BOARDS_CODEX_CLI_BIN=
 OPENAI_COMPAT_BASE_URL=
 OPENAI_COMPAT_API_KEY=
 OPENAI_COMPAT_MODEL=
@@ -139,7 +142,7 @@ OPENAI_COMPAT_MODEL=
 
 The same parser settings can be inspected and updated from the web app's Settings dialog. Settings and sync diagnostics persist in SQLite across backend restarts.
 
-The Settings dialog includes Gemini, OpenRouter, DeepSeek, and custom provider presets. The DeepSeek preset uses `https://api.deepseek.com` with `deepseek-v4-flash`.
+The Settings dialog includes Codex CLI, Gemini, OpenRouter, DeepSeek, and custom provider presets. The Codex CLI preset runs `codex exec` with `gpt-5.4-mini` and parses the plain final message because the CLI provider path does not rely on response schemas. Codex CLI sync runs are invoked with ephemeral execution and an internal skip marker so parser runs do not get re-imported as new Codex threads.
 
 ## API Surface
 

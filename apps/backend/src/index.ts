@@ -9,6 +9,7 @@ import {
   type ExportMulticaPayload,
   type IssueFilters,
   type ParsedIssue,
+  type ParserProvider,
   type SavedView,
   type SettingsResponse,
   type SyncRequestPayload,
@@ -40,11 +41,14 @@ function createOnboardingState(response: {
   parser: ReturnType<typeof readParserSettings>;
   sync: SettingsResponse['sync'];
 }): SettingsResponse['onboarding'] {
-  const providerReady = Boolean(
-    response.parser.baseUrl &&
-      response.parser.model &&
-      response.parser.apiKeyConfigured,
-  );
+  const providerReady =
+    response.parser.provider === 'codex-cli'
+      ? Boolean(response.parser.model)
+      : Boolean(
+          response.parser.baseUrl &&
+            response.parser.model &&
+            response.parser.apiKeyConfigured,
+        );
   const hasCompletedSync = Boolean(response.sync);
   const step = !providerReady
     ? 'provider'
@@ -210,6 +214,7 @@ export function createAppServer(config: AppConfig = getConfig()) {
   app.post('/api/settings', async (context) => {
     const body = (await context.req.json()) as {
       parser?: {
+        provider?: ParserProvider | null;
         baseUrl?: string | null;
         model?: string | null;
         apiKey?: string | null;

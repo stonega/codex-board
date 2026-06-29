@@ -28,10 +28,16 @@ From the repository script, pass CLI flags after `--`; for example:
 ```bash
 bun run codex-board -- --help
 bun run codex-board -- --version
+bun run codex-board -- --clear
 ```
 
 When installed as a package executable, the same commands are available as
-`codex-board --help` and `codex-board --version`.
+`codex-board --help`, `codex-board --version`, and `codex-board --clear`.
+
+Use `--clear` to reset local Codex Boards state before startup. The command
+asks for confirmation, deletes the resolved SQLite database and SQLite sidecar
+files, and leaves the original Codex session history under `~/.codex/sessions`
+untouched.
 
 Backend:
 
@@ -62,12 +68,17 @@ The export command runs a sync first by default, then creates one Multica issue 
 Optional parser configuration:
 
 ```bash
+export CODEX_BOARDS_PARSER_PROVIDER=openai-compatible
 export OPENAI_COMPAT_BASE_URL=http://localhost:11434/v1
 export OPENAI_COMPAT_API_KEY=placeholder
 export OPENAI_COMPAT_MODEL=qwen2.5-coder:7b
 ```
 
-You can also inspect and update the runtime parser settings from the web app's Settings dialog. The dialog includes Gemini, OpenRouter, DeepSeek, and custom provider presets. The DeepSeek preset uses `https://api.deepseek.com` with `deepseek-v4-flash`. The dialog updates the backend's OpenAI-compatible parser target, shows recent sync history, and persists both parser settings and sync diagnostics in SQLite for subsequent sync runs and backend restarts.
+For Codex CLI parsing, set `CODEX_BOARDS_PARSER_PROVIDER=codex-cli`; the
+default model is `gpt-5.4-mini`. Set `CODEX_BOARDS_CODEX_CLI_BIN` only when the
+backend should call a non-default `codex` executable path.
+
+You can also inspect and update the runtime parser settings from the web app's Settings dialog. The dialog includes Codex CLI, Gemini, OpenRouter, DeepSeek, and custom provider presets. The Codex CLI preset runs `codex exec` with `gpt-5.4-mini` and parses the plain final message because this path does not use response schemas. Codex CLI sync runs use ephemeral execution and an internal skip marker so parser runs do not get re-imported as new Codex threads. The dialog updates the backend parser target, shows recent sync history, and persists both parser settings and sync diagnostics in SQLite for subsequent sync runs and backend restarts.
 
 ## Initial implementation choices
 
