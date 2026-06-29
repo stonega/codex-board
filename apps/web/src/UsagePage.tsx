@@ -170,9 +170,9 @@ function MetricCard({
   detail?: string;
 }) {
   return (
-    <Card className="min-h-[88px]">
-      <CardContent className="flex items-start gap-3 p-3.5">
-        <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-notion-active text-notion-muted">
+    <Card className="min-h-[88px] p-4">
+      <CardContent className="flex items-start gap-3">
+        <div className="flex size-4 shrink-0 items-center justify-center rounded-md bg-notion-active text-notion-muted">
           {icon}
         </div>
         <div className="min-w-0 flex-1">
@@ -310,7 +310,7 @@ export function UsagePage() {
   const daily = usage?.daily ?? [];
 
   return (
-    <div className="flex w-full max-w-[1480px] flex-col gap-4 px-4 py-5 pb-12 sm:px-8 lg:px-10">
+    <div className="flex w-full flex-col gap-4 px-4 py-5 pb-12 sm:px-8 lg:px-10">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex items-start gap-3">
           <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-notion-active text-notion-muted">
@@ -364,7 +364,7 @@ export function UsagePage() {
           >
             <RefreshCw
               data-icon="inline-start"
-              className={refreshing ? 'animate-spin' : undefined}
+              className={refreshing ? 'animate-spin size-3' : 'size-3'}
             />
             {refreshing ? 'Refreshing...' : 'Refresh usage'}
           </Button>
