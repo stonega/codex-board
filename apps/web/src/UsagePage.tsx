@@ -170,7 +170,7 @@ function MetricCard({
   detail?: string;
 }) {
   return (
-    <Card className="min-h-[88px] p-4">
+    <Card className="p-4">
       <CardContent className="flex items-start gap-3">
         <div className="flex size-4 shrink-0 items-center justify-center rounded-md bg-notion-active text-notion-muted">
           {icon}
