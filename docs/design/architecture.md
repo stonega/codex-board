@@ -83,8 +83,9 @@ Primary endpoints:
 - `POST /api/settings`
 - `GET /api/projects`
 - `GET /api/skills`
-- `GET /api/skills/recommendations`
+- `GET /api/skills/suggestions`
 - `GET /api/skills/:id`
+- `POST /api/skills/install`
 - `GET /api/usage`
 - `POST /api/usage/refresh`
 - `GET /api/issues`
@@ -95,7 +96,7 @@ Primary endpoints:
 - `GET /api/views`
 - `POST /api/views`
 
-The web UI consumes these endpoints directly and renders first-run provider onboarding, a user-started first sync screen with an optional latest-100 thread cap, project navigation, filterable issue tables, global and project-local skill lists, usage charts, a runtime parser settings sheet with sync history, live homepage sync status, and right-side detail sheets.
+The web UI consumes these endpoints directly and renders first-run provider onboarding, a user-started first sync screen with an optional latest-100 thread cap, project navigation, filterable issue tables, global and project-local skill lists, draft skill suggestions derived from repeated workspace thread patterns, usage charts, a runtime parser settings sheet with sync history, live homepage sync status, and right-side detail sheets.
 
 The usage dashboard follows the same local-first boundary as issue ingestion. It parses only token-count aggregates from local Codex JSONL logs, including archived sessions, and persists no prompts, assistant messages, tool output, command text, patches, or transcript snippets. Successful sync runs refresh the local usage index automatically. Estimated USD cost is calculated only from a local pricing JSON file; normal dashboard reads do not fetch pricing from the network.
 

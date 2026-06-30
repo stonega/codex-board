@@ -33,6 +33,8 @@ import { Route, Routes } from 'react-router';
 
 import type {
   ExportMulticaResponse,
+  InstallSkillPayload,
+  InstallSkillResponse,
   IssueDetailResponse,
   IssueFilters,
   IssueListResponse,
@@ -45,9 +47,10 @@ import type {
   SettingsResponse,
   SkillDetail,
   SkillDetailResponse,
+  SkillInstallTarget,
   SkillListResponse,
-  SkillRecommendation,
-  SkillRecommendationListResponse,
+  SkillSuggestion,
+  SkillSuggestionListResponse,
   SkillSummary,
   SyncDiagnostics,
   SyncRequestPayload,
@@ -471,79 +474,85 @@ function ProjectTabBar({
   );
 }
 
-function SkillRecommendationList({
-  recommendations,
-  issueCount,
+function SkillSuggestionList({
+  suggestions,
+  signalCount,
   loading,
   onOpen,
 }: {
-  recommendations: SkillRecommendation[];
-  issueCount: number;
+  suggestions: SkillSuggestion[];
+  signalCount: number;
   loading: boolean;
-  onOpen: (recommendation: SkillRecommendation) => void;
+  onOpen: (suggestion: SkillSuggestion) => void;
 }) {
   return (
     <section className="mb-8 grid gap-3">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-0">
           <p className="mb-1 text-[0.75rem] font-semibold uppercase tracking-wider text-notion-muted">
-            Auto Skill Found
+            Workspace Patterns
           </p>
           <h3 className="text-lg font-semibold tracking-tight text-notion-text">
-            Recommended skills
+            Draft skill suggestions
           </h3>
         </div>
-        <Badge>{issueCount} issues scanned</Badge>
+        <Badge>{signalCount} thread signals</Badge>
       </div>
 
       {loading ? (
-        <TableEmpty>Finding skill recommendations...</TableEmpty>
-      ) : recommendations.length === 0 ? (
-        <TableEmpty>No skill recommendations matched this project.</TableEmpty>
+        <TableEmpty>Finding repeated workspace task patterns...</TableEmpty>
+      ) : suggestions.length === 0 ? (
+        <TableEmpty>No repeated skill patterns were found yet.</TableEmpty>
       ) : (
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 2xl:grid-cols-3">
-          {recommendations.map((recommendation) => (
+          {suggestions.map((suggestion) => (
             <button
-              className="group flex min-h-44 w-full min-w-0 flex-col rounded-lg border border-notion-border bg-white p-4 text-left shadow-[0_1px_2px_rgba(15,15,15,0.03)] transition-colors hover:border-notion-muted/30 hover:bg-notion-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-notion-blue focus-visible:ring-offset-2 focus-visible:ring-offset-white"
-              key={recommendation.skill.id}
-              onClick={() => onOpen(recommendation)}
+              className="group flex min-h-56 w-full min-w-0 flex-col rounded-lg border border-notion-border bg-white p-4 text-left shadow-[0_1px_2px_rgba(15,15,15,0.03)] transition-colors hover:border-notion-muted/30 hover:bg-notion-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-notion-blue focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+              key={suggestion.id}
+              onClick={() => onOpen(suggestion)}
               type="button"
             >
               <div className="mb-3 flex min-w-0 flex-col items-start gap-2">
                 <div className="min-w-0 max-w-full">
                   <strong className="block break-words text-sm font-semibold leading-snug text-notion-text">
-                    {recommendation.skill.name}
+                    {suggestion.title}
                   </strong>
-                  <span className="mt-1 block truncate text-[0.75rem] text-notion-muted">
-                    {recommendation.skill.relativePath}
+                  <span className="mt-1 block break-words text-[0.75rem] text-notion-muted">
+                    {suggestion.name}
                   </span>
                 </div>
                 <div className="flex flex-wrap items-center gap-1.5">
-                  <Badge>{recommendation.skill.sourceLabel}</Badge>
-                  <Badge>{recommendation.score}% match</Badge>
+                  <Badge>Draft</Badge>
+                  <Badge>{suggestion.evidenceThreadCount} threads</Badge>
                   <span className="text-[0.75rem] text-notion-muted">
-                    {recommendation.matchedIssueCount} issues
+                    from prompts and outcomes
                   </span>
                 </div>
               </div>
 
               <p className="line-clamp-3 text-sm leading-relaxed text-notion-muted">
-                {recommendation.reasons[0]}
+                {suggestion.description}
               </p>
 
-              {recommendation.matchedTerms.length > 0 ? (
+              {suggestion.tags.length > 0 ? (
                 <div className="mt-3 flex flex-wrap gap-1">
-                  {recommendation.matchedTerms.slice(0, 5).map((term) => (
-                    <Badge className={getTagBadgeClass(term)} key={term}>
-                      {term}
+                  {suggestion.tags.slice(0, 5).map((tag) => (
+                    <Badge className={getTagBadgeClass(tag)} key={tag}>
+                      {tag}
                     </Badge>
                   ))}
                 </div>
               ) : null}
 
+              {suggestion.examplePrompts.length > 0 ? (
+                <p className="mt-3 line-clamp-2 text-[0.75rem] leading-relaxed text-notion-muted">
+                  {suggestion.examplePrompts[0]}
+                </p>
+              ) : null}
+
               <span className="mt-auto flex items-center gap-1.5 pt-4 text-[0.75rem] font-medium text-notion-muted transition-colors group-hover:text-notion-text">
-                <BookOpen size={14} />
-                Open skill
+                <Sparkles size={14} />
+                Open draft
               </span>
             </button>
           ))}
@@ -610,10 +619,26 @@ function SkillList({
 function SkillDetailSheet({
   skill,
   onClose,
+  onAddDraftSkill,
+  addingDraftSkill,
+  draftSkillMessage,
 }: {
   skill: SkillDetail | null;
   onClose: () => void;
+  onAddDraftSkill?: (target: SkillInstallTarget) => Promise<void>;
+  addingDraftSkill?: boolean;
+  draftSkillMessage?: string | null;
 }) {
+  const [addMenuState, setAddMenuState] = useState<{
+    skillId: string | null;
+    open: boolean;
+  }>({
+    skillId: null,
+    open: false,
+  });
+  const isDraftSuggestion = skill?.sourceLabel === 'Draft suggestion';
+  const addMenuOpen = addMenuState.skillId === skill?.id && addMenuState.open;
+
   return (
     <Sheet
       open={Boolean(skill)}
@@ -636,10 +661,63 @@ function SkillDetailSheet({
                 </p>
               ) : null}
             </div>
-            <Button onClick={onClose} variant="ghost" size="sm">
-              <X size={16} />
-            </Button>
+            <div className="flex shrink-0 items-center gap-2">
+              {isDraftSuggestion && onAddDraftSkill ? (
+                <div className="relative">
+                  <Button
+                    disabled={addingDraftSkill}
+                    onClick={() =>
+                      setAddMenuState((current) => ({
+                        skillId: skill?.id ?? null,
+                        open:
+                          current.skillId === skill?.id ? !current.open : true,
+                      }))
+                    }
+                    size="sm"
+                    type="button"
+                  >
+                    <Plus size={14} />
+                    {addingDraftSkill ? 'Adding...' : 'Add Skill'}
+                  </Button>
+                  {addMenuOpen ? (
+                    <div className="absolute right-0 top-[calc(100%+0.5rem)] z-20 grid min-w-44 overflow-hidden rounded-lg border border-notion-border bg-white p-1 text-[0.75rem] shadow-lg">
+                      <button
+                        className="rounded-md px-3 py-2 text-left text-notion-text hover:bg-notion-hover focus:bg-notion-hover focus:outline-none"
+                        disabled={addingDraftSkill}
+                        onClick={() => {
+                          setAddMenuState({ skillId: null, open: false });
+                          void onAddDraftSkill('workspace');
+                        }}
+                        type="button"
+                      >
+                        Add to workspace
+                      </button>
+                      <button
+                        className="rounded-md px-3 py-2 text-left text-notion-text hover:bg-notion-hover focus:bg-notion-hover focus:outline-none"
+                        disabled={addingDraftSkill}
+                        onClick={() => {
+                          setAddMenuState({ skillId: null, open: false });
+                          void onAddDraftSkill('global');
+                        }}
+                        type="button"
+                      >
+                        Add globally
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+              <Button onClick={onClose} variant="ghost" size="sm">
+                <X size={16} />
+              </Button>
+            </div>
           </header>
+
+          {draftSkillMessage ? (
+            <p className="rounded border border-notion-border bg-notion-hover p-3 text-sm text-notion-muted">
+              {draftSkillMessage}
+            </p>
+          ) : null}
 
           <section className="grid gap-6 pb-12">
             <div className="grid gap-4 border-t border-notion-border pt-4 sm:grid-cols-2">
@@ -1328,8 +1406,8 @@ function BoardPage() {
     useState<SkillListResponse | null>(null);
   const [projectSkillsResponse, setProjectSkillsResponse] =
     useState<SkillListResponse | null>(null);
-  const [skillRecommendationsResponse, setSkillRecommendationsResponse] =
-    useState<SkillRecommendationListResponse | null>(null);
+  const [skillSuggestionsResponse, setSkillSuggestionsResponse] =
+    useState<SkillSuggestionListResponse | null>(null);
   const [selectedIssue, setSelectedIssue] = useState<ParsedIssue | null>(null);
   const [selectedSkill, setSelectedSkill] = useState<SkillDetail | null>(null);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
@@ -1350,10 +1428,13 @@ function BoardPage() {
   const [loadingIssues, setLoadingIssues] = useState(false);
   const [loadingGlobalSkills, setLoadingGlobalSkills] = useState(false);
   const [loadingProjectSkills, setLoadingProjectSkills] = useState(false);
-  const [loadingSkillRecommendations, setLoadingSkillRecommendations] =
-    useState(false);
+  const [loadingSkillSuggestions, setLoadingSkillSuggestions] = useState(false);
   const [loadingSettings, setLoadingSettings] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
+  const [addingDraftSkill, setAddingDraftSkill] = useState(false);
+  const [draftSkillMessage, setDraftSkillMessage] = useState<string | null>(
+    null,
+  );
   const [runningSync, setRunningSync] = useState(false);
   const [syncRefreshToken, setSyncRefreshToken] = useState(0);
   const [limitOnboardingSyncToLatest100, setLimitOnboardingSyncToLatest100] =
@@ -1557,29 +1638,29 @@ function BoardPage() {
       projectTab !== 'skills'
     ) {
       setProjectSkillsResponse(null);
-      setSkillRecommendationsResponse(null);
+      setSkillSuggestionsResponse(null);
       return;
     }
 
     let mounted = true;
     setLoadingProjectSkills(true);
-    setLoadingSkillRecommendations(true);
+    setLoadingSkillSuggestions(true);
     setError(null);
     const projectQuery = encodeURIComponent(selectedProjectId);
 
     void Promise.all([
       fetchJson<SkillListResponse>(`/skills?projectId=${projectQuery}`),
-      fetchJson<SkillRecommendationListResponse>(
-        `/skills/recommendations?projectId=${projectQuery}`,
+      fetchJson<SkillSuggestionListResponse>(
+        `/skills/suggestions?projectId=${projectQuery}`,
       ),
     ])
-      .then(([skillsPayload, recommendationsPayload]) => {
+      .then(([skillsPayload, suggestionsPayload]) => {
         if (!mounted) {
           return;
         }
         startTransition(() => {
           setProjectSkillsResponse(skillsPayload);
-          setSkillRecommendationsResponse(recommendationsPayload);
+          setSkillSuggestionsResponse(suggestionsPayload);
         });
       })
       .catch((loadError) => {
@@ -1592,7 +1673,7 @@ function BoardPage() {
       .finally(() => {
         if (mounted) {
           setLoadingProjectSkills(false);
-          setLoadingSkillRecommendations(false);
+          setLoadingSkillSuggestions(false);
         }
       });
 
@@ -1707,6 +1788,7 @@ function BoardPage() {
   }
 
   async function openSkill(skillId: string, scopedProjectId?: string | null) {
+    setDraftSkillMessage(null);
     const projectQuery = scopedProjectId
       ? `?projectId=${encodeURIComponent(scopedProjectId)}`
       : '';
@@ -1719,6 +1801,103 @@ function BoardPage() {
       setError(
         loadError instanceof Error ? loadError.message : 'Unknown error',
       );
+    }
+  }
+
+  function openSkillSuggestion(suggestion: SkillSuggestion) {
+    setDraftSkillMessage(null);
+    const relativePath = `.agents/skills/${suggestion.name}/SKILL.md`;
+    setSelectedSkill({
+      id: suggestion.id,
+      name: suggestion.name,
+      description: suggestion.description,
+      source: 'project',
+      sourceLabel: 'Draft suggestion',
+      sourceName: selectedProject?.id ?? null,
+      path: selectedProject
+        ? `${selectedProject.workspacePath}/${relativePath}`
+        : relativePath,
+      relativePath,
+      projectId: selectedProject?.id ?? null,
+      content: suggestion.suggestedSkillBody,
+    });
+  }
+
+  async function addDraftSkill(target: SkillInstallTarget) {
+    if (!selectedSkill) {
+      return;
+    }
+
+    setAddingDraftSkill(true);
+    setDraftSkillMessage(null);
+
+    const payload: InstallSkillPayload = {
+      target,
+      projectId: target === 'workspace' ? selectedProject?.id : null,
+      name: selectedSkill.name,
+      description: selectedSkill.description,
+      content: selectedSkill.content,
+    };
+
+    try {
+      const apiBaseUrl = await resolveApiBaseUrl();
+      const installResponse = await fetch(`${apiBaseUrl}/skills/install`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+      const response = (await installResponse.json()) as InstallSkillResponse;
+      if (!response.ok || !response.skill) {
+        throw new Error(response.message || 'Failed to add skill.');
+      }
+
+      const savedSkill = response.skill;
+      const installedSkill: SkillDetail = {
+        ...savedSkill,
+        content: selectedSkill.content,
+      };
+      setSelectedSkill(installedSkill);
+      setDraftSkillMessage(response.message);
+
+      if (target === 'workspace') {
+        setProjectSkillsResponse((current) =>
+          current
+            ? {
+                ...current,
+                skills: [
+                  ...current.skills.filter(
+                    (skill) => skill.id !== savedSkill.id,
+                  ),
+                  savedSkill,
+                ].sort((left, right) => left.name.localeCompare(right.name)),
+              }
+            : current,
+        );
+      } else {
+        setGlobalSkillsResponse((current) =>
+          current
+            ? {
+                ...current,
+                skills: [
+                  ...current.skills.filter(
+                    (skill) => skill.id !== savedSkill.id,
+                  ),
+                  savedSkill,
+                ].sort((left, right) => left.name.localeCompare(right.name)),
+              }
+            : current,
+        );
+      }
+    } catch (installError) {
+      setDraftSkillMessage(
+        installError instanceof Error
+          ? installError.message
+          : 'Failed to add skill.',
+      );
+    } finally {
+      setAddingDraftSkill(false);
     }
   }
 
@@ -2304,22 +2483,15 @@ function BoardPage() {
                   </p>
                 ) : null}
 
-                <div className="px-4 pb-12 sm:px-8 lg:px-12">
+                <div className="px-4 pt-4 pb-12 sm:px-8 lg:px-12 border-t border-notion-border ">
                   {projectTab === 'skills' ? (
                     <>
-                      <SkillRecommendationList
-                        issueCount={
-                          skillRecommendationsResponse?.issueCount ?? 0
-                        }
-                        loading={loadingSkillRecommendations}
-                        onOpen={(recommendation) =>
-                          void openSkill(
-                            recommendation.skill.id,
-                            recommendation.skill.projectId ?? null,
-                          )
-                        }
-                        recommendations={
-                          skillRecommendationsResponse?.recommendations ?? []
+                      <SkillSuggestionList
+                        signalCount={skillSuggestionsResponse?.signalCount ?? 0}
+                        loading={loadingSkillSuggestions}
+                        onOpen={openSkillSuggestion}
+                        suggestions={
+                          skillSuggestionsResponse?.suggestions ?? []
                         }
                       />
 
@@ -2445,8 +2617,14 @@ function BoardPage() {
         onReviewToggle={toggleReview}
       />
       <SkillDetailSheet
+        addingDraftSkill={addingDraftSkill}
+        draftSkillMessage={draftSkillMessage}
+        onAddDraftSkill={addDraftSkill}
         skill={selectedSkill}
-        onClose={() => setSelectedSkill(null)}
+        onClose={() => {
+          setSelectedSkill(null);
+          setDraftSkillMessage(null);
+        }}
       />
       <SettingsModal
         error={settingsError}

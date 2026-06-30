@@ -2,27 +2,33 @@ import { createHash } from 'node:crypto';
 import {
   type Dirent,
   existsSync,
+  mkdirSync,
   readFileSync,
   readdirSync,
   realpathSync,
   statSync,
+  writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 
-import type {
-  ParsedIssue,
-  ProjectSummary,
-  SkillDetailResponse,
-  SkillListResponse,
-  SkillRecommendation,
-  SkillRecommendationListResponse,
-  SkillSource,
-  SkillSummary,
+import {
+  type InstallSkillPayload,
+  type InstallSkillResponse,
+  type ParsedIssue,
+  type ProjectSummary,
+  type SkillDetailResponse,
+  type SkillListResponse,
+  type SkillSource,
+  type SkillSuggestion,
+  type SkillSuggestionListResponse,
+  type SkillSummary,
+  slugify,
 } from '../../../packages/domain/src/index';
 
 import type { AppConfig } from './config';
-import type { BoardsDatabase } from './db';
+import type { BoardsDatabase, SkillThreadSignalRecord } from './db';
+import type { ThreadCandidate } from './rollout-parser';
 
 interface SkillRoot {
   path: string;
@@ -49,133 +55,23 @@ interface SkillRequestContext {
 }
 
 const SKIP_DIRECTORIES = new Set(['.git', 'node_modules', 'dist', 'build']);
-const RECOMMENDATION_LIMIT = 5;
-const IMPORTANT_SHORT_TOKENS = new Set([
-  'ai',
-  'api',
-  'ci',
-  'db',
-  'e2e',
-  'pr',
-  'qa',
-  'ui',
-  'ux',
-]);
-const STOP_WORDS = new Set([
-  'about',
-  'after',
-  'agent',
-  'agents',
-  'also',
-  'and',
-  'app',
-  'apps',
-  'application',
-  'available',
-  'any',
-  'are',
-  'around',
-  'based',
-  'been',
-  'before',
-  'being',
+const SUGGESTION_LIMIT = 6;
+const MIN_SUGGESTION_EVIDENCE = 2;
+const MAX_EVIDENCE_ITEMS = 3;
+const ACTION_TAGS = new Set([
   'build',
-  'can',
-  'change',
-  'changes',
-  'codex',
-  'could',
-  'clean',
-  'content',
-  'data',
-  'directly',
-  'does',
-  'each',
-  'focused',
-  'for',
-  'from',
-  'has',
-  'have',
-  'help',
-  'helps',
-  'history',
-  'into',
-  'issue',
-  'issues',
-  'its',
-  'local',
-  'make',
-  'need',
-  'needs',
-  'new',
-  'not',
-  'only',
-  'open',
-  'opened',
-  'opening',
-  'pass',
-  'project',
-  'projects',
-  'run',
-  'running',
-  'should',
-  'skill',
-  'skills',
-  'task',
-  'that',
-  'the',
-  'their',
-  'this',
-  'thread',
-  'threads',
-  'use',
-  'used',
-  'user',
-  'users',
-  'using',
-  'via',
-  'want',
-  'web',
-  'when',
-  'with',
-  'work',
-  'workflow',
-  'workflows',
-  'would',
-  'you',
-  'your',
+  'commit',
+  'configure',
+  'debug',
+  'document',
+  'fix',
+  'improve',
+  'investigate',
+  'release',
+  'refactor',
+  'review',
+  'test',
 ]);
-const TOKEN_ALIASES: Record<string, string[]> = {
-  action: ['github', 'ci'],
-  actions: ['github', 'ci'],
-  auth: ['authentication', 'login'],
-  base: ['onchain', 'wallet'],
-  billing: ['stripe', 'payment'],
-  browser: ['playwright', 'web'],
-  ci: ['github', 'actions', 'test'],
-  database: ['db'],
-  debug: ['bug', 'fix'],
-  debugging: ['bug', 'fix'],
-  db: ['database'],
-  design: ['figma', 'ui', 'ux'],
-  doc: ['docs', 'documentation'],
-  docs: ['documentation'],
-  e2e: ['playwright', 'test'],
-  frontend: ['react', 'ui'],
-  gh: ['github'],
-  git: ['github', 'repository'],
-  issue: ['bug'],
-  mobile: ['responsive'],
-  pay: ['payment'],
-  pr: ['pull', 'request', 'review'],
-  prs: ['pull', 'request', 'review'],
-  qa: ['test', 'review'],
-  review: ['pr', 'qa'],
-  sql: ['database', 'db'],
-  ui: ['frontend', 'interface'],
-  ux: ['frontend', 'interface'],
-  wallet: ['onchain', 'crypto'],
-};
 
 function resolveCodexHome(config: AppConfig): string {
   return config.codexHome ?? join(homedir(), '.codex');
@@ -552,186 +448,906 @@ function getScopedSkills(context: SkillRequestContext): {
   };
 }
 
-function normalizeRecommendationToken(token: string): string | null {
-  const normalized = token
-    .toLowerCase()
-    .replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, '');
-  if (!normalized) {
-    return null;
-  }
-
-  if (normalized.length < 3 && !IMPORTANT_SHORT_TOKENS.has(normalized)) {
-    return null;
-  }
-
-  if (STOP_WORDS.has(normalized)) {
-    return null;
-  }
-
-  return normalized;
+interface TaskTagDefinition {
+  tag: string;
+  label: string;
+  kind: 'action' | 'domain' | 'tool';
+  patterns: RegExp[];
 }
 
-function tokenizeForRecommendations(value: string): string[] {
-  const tokens = new Set<string>();
-
-  for (const rawToken of value.split(/[^a-zA-Z0-9]+/)) {
-    const token = normalizeRecommendationToken(rawToken);
-    if (!token) {
-      continue;
-    }
-
-    tokens.add(token);
-    for (const alias of TOKEN_ALIASES[token] ?? []) {
-      const normalizedAlias = normalizeRecommendationToken(alias);
-      if (normalizedAlias) {
-        tokens.add(normalizedAlias);
-      }
-    }
-  }
-
-  return Array.from(tokens);
+interface SkillSuggestionProfile {
+  id: string;
+  title: string;
+  name: string;
+  description: string;
+  trigger: string;
+  requiredTags: string[];
+  anyTags?: string[];
 }
 
-function getIssueRecommendationText(issue: ParsedIssue): string {
-  return [
-    issue.title,
-    issue.summary,
-    issue.status,
-    issue.priority,
-    ...issue.tags,
-    ...issue.evidence.warnings,
-    issue.evidence.parsePayloadPreview,
-    issue.git.branch ?? '',
-    ...issue.git.tags,
-    ...issue.git.commits.map((commit) => commit.message ?? ''),
-  ].join(' ');
+interface SuggestionCluster {
+  key: string;
+  signals: SkillThreadSignalRecord[];
 }
 
-function getSkillRecommendationText(skill: SkillSummary): string {
-  return [
-    skill.name,
-    skill.description,
-    skill.relativePath,
-    skill.sourceLabel,
-    skill.sourceName ?? '',
-  ].join(' ');
-}
+const TASK_TAGS: TaskTagDefinition[] = [
+  {
+    tag: 'fix',
+    label: 'fix',
+    kind: 'action',
+    patterns: [
+      /\bfix(?:ed|ing)?\b/i,
+      /\bbug\b/i,
+      /\berror\b/i,
+      /\bfail(?:ed|ing|ure)?\b/i,
+      /\bbroken\b/i,
+      /\bregression\b/i,
+    ],
+  },
+  {
+    tag: 'improve',
+    label: 'improve',
+    kind: 'action',
+    patterns: [
+      /\bimprove(?:d|ment|ments|ing)?\b/i,
+      /\bpolish(?:ed|ing)?\b/i,
+      /\bclean(?:ed|ing)? up\b/i,
+      /\bmake .*better\b/i,
+    ],
+  },
+  {
+    tag: 'build',
+    label: 'build',
+    kind: 'action',
+    patterns: [
+      /\badd(?:ed|ing)?\b/i,
+      /\bbuild(?:ing|t)?\b/i,
+      /\bcreate(?:d|ing)?\b/i,
+      /\bimplement(?:ed|ing)?\b/i,
+      /\bset up\b/i,
+    ],
+  },
+  {
+    tag: 'review',
+    label: 'review',
+    kind: 'action',
+    patterns: [
+      /\breview\b/i,
+      /\breview comments?\b/i,
+      /\brequested changes?\b/i,
+      /\bpr feedback\b/i,
+    ],
+  },
+  {
+    tag: 'test',
+    label: 'test',
+    kind: 'action',
+    patterns: [
+      /\btest(?:ed|ing|s)?\b/i,
+      /\be2e\b/i,
+      /\bplaywright\b/i,
+      /\bvitest\b/i,
+      /\bcoverage\b/i,
+    ],
+  },
+  {
+    tag: 'release',
+    label: 'release',
+    kind: 'action',
+    patterns: [
+      /\brelease\b/i,
+      /\bpublish(?:ed|ing)?\b/i,
+      /\bversion\b/i,
+      /\btag\b/i,
+      /\bchangelog\b/i,
+    ],
+  },
+  {
+    tag: 'document',
+    label: 'document',
+    kind: 'action',
+    patterns: [
+      /\bdoc(?:s|umentation)?\b/i,
+      /\breadme\b/i,
+      /\bguide\b/i,
+      /\bwrite up\b/i,
+    ],
+  },
+  {
+    tag: 'configure',
+    label: 'configure',
+    kind: 'action',
+    patterns: [
+      /\bconfig(?:ure|ured|uring|uration)?\b/i,
+      /\bsetting(?:s)?\b/i,
+      /\bsetup\b/i,
+      /\bwire(?:d|ing)?\b/i,
+    ],
+  },
+  {
+    tag: 'refactor',
+    label: 'refactor',
+    kind: 'action',
+    patterns: [
+      /\brefactor(?:ed|ing)?\b/i,
+      /\brework(?:ed|ing)?\b/i,
+      /\brestructure(?:d|ing)?\b/i,
+    ],
+  },
+  {
+    tag: 'debug',
+    label: 'debug',
+    kind: 'action',
+    patterns: [
+      /\bdebug(?:ged|ging)?\b/i,
+      /\binvestigat(?:e|ed|ing)\b/i,
+      /\btrace(?:d|ing)?\b/i,
+      /\bfind .*cause\b/i,
+    ],
+  },
+  {
+    tag: 'commit',
+    label: 'commit',
+    kind: 'action',
+    patterns: [/\bcommit\b/i, /\bpush\b/i],
+  },
+  {
+    tag: 'react',
+    label: 'React',
+    kind: 'tool',
+    patterns: [/\breact\b/i, /\btsx\b/i, /\bjsx\b/i],
+  },
+  {
+    tag: 'frontend',
+    label: 'frontend',
+    kind: 'domain',
+    patterns: [
+      /\bfrontend\b/i,
+      /\bweb ui\b/i,
+      /\bcomponent(?:s)?\b/i,
+      /\blayout\b/i,
+    ],
+  },
+  {
+    tag: 'ui',
+    label: 'UI',
+    kind: 'domain',
+    patterns: [
+      /\bui\b/i,
+      /\bux\b/i,
+      /\bvisual\b/i,
+      /\bstyle(?:d|s|ing)?\b/i,
+      /\bresponsive\b/i,
+      /\bmobile\b/i,
+    ],
+  },
+  {
+    tag: 'playwright',
+    label: 'Playwright',
+    kind: 'tool',
+    patterns: [/\bplaywright\b/i, /\bbrowser test(?:s)?\b/i, /\be2e\b/i],
+  },
+  {
+    tag: 'github',
+    label: 'GitHub',
+    kind: 'tool',
+    patterns: [/\bgithub\b/i, /\bgh\b/i, /\bpull request\b/i, /\bpr\b/i],
+  },
+  {
+    tag: 'ci',
+    label: 'CI',
+    kind: 'domain',
+    patterns: [
+      /\bci\b/i,
+      /\bgithub actions?\b/i,
+      /\bchecks?\b/i,
+      /\bworkflow\b/i,
+    ],
+  },
+  {
+    tag: 'backend',
+    label: 'backend',
+    kind: 'domain',
+    patterns: [/\bbackend\b/i, /\bserver\b/i, /\bhono\b/i, /\bendpoint\b/i],
+  },
+  {
+    tag: 'api',
+    label: 'API',
+    kind: 'domain',
+    patterns: [/\bapi\b/i, /\bendpoint(?:s)?\b/i, /\broute(?:s)?\b/i],
+  },
+  {
+    tag: 'database',
+    label: 'database',
+    kind: 'domain',
+    patterns: [
+      /\bdatabase\b/i,
+      /\bsqlite\b/i,
+      /\bdb\b/i,
+      /\bmigration\b/i,
+      /\bschema\b/i,
+    ],
+  },
+  {
+    tag: 'sync',
+    label: 'sync',
+    kind: 'domain',
+    patterns: [
+      /\bsync\b/i,
+      /\bingest(?:ion)?\b/i,
+      /\brollout\b/i,
+      /\bthread(?:s)?\b/i,
+    ],
+  },
+  {
+    tag: 'parser',
+    label: 'parser',
+    kind: 'domain',
+    patterns: [
+      /\bparser\b/i,
+      /\bparse\b/i,
+      /\bclassification\b/i,
+      /\bheuristic(?:s)?\b/i,
+    ],
+  },
+  {
+    tag: 'skill',
+    label: 'skills',
+    kind: 'domain',
+    patterns: [/\bskill(?:s)?\b/i, /\bskill\.md\b/i, /\bsuggestion(?:s)?\b/i],
+  },
+  {
+    tag: 'usage',
+    label: 'usage',
+    kind: 'domain',
+    patterns: [
+      /\busage\b/i,
+      /\btoken(?:s)?\b/i,
+      /\bcost(?:s)?\b/i,
+      /\bpricing\b/i,
+    ],
+  },
+  {
+    tag: 'desktop',
+    label: 'desktop',
+    kind: 'domain',
+    patterns: [
+      /\bdesktop\b/i,
+      /\btauri\b/i,
+      /\bgnome\b/i,
+      /\bgtk\b/i,
+      /\bflatpak\b/i,
+    ],
+  },
+  {
+    tag: 'docs',
+    label: 'docs',
+    kind: 'domain',
+    patterns: [/\bdocs?\b/i, /\bdocumentation\b/i, /\breadme\b/i],
+  },
+];
 
-function createIssueSignals(issues: ParsedIssue[]): Array<{
-  issue: ParsedIssue;
-  terms: Set<string>;
-}> {
-  return issues.map((issue) => ({
-    issue,
-    terms: new Set(
-      tokenizeForRecommendations(getIssueRecommendationText(issue)),
-    ),
-  }));
-}
+const TASK_TAG_LABELS = new Map(TASK_TAGS.map((tag) => [tag.tag, tag.label]));
 
-function scoreSkillRecommendation(
-  skill: SkillSummary,
-  issueSignals: Array<{ issue: ParsedIssue; terms: Set<string> }>,
-  projectIssueCount: number,
-): SkillRecommendation | null {
-  const skillTerms = new Set(
-    tokenizeForRecommendations(getSkillRecommendationText(skill)),
-  );
-  if (skillTerms.size === 0) {
-    return null;
-  }
+const SUGGESTION_PROFILES: SkillSuggestionProfile[] = [
+  {
+    id: 'github-pr-review',
+    title: 'Handle GitHub PR review feedback',
+    name: 'github-pr-review',
+    description:
+      'Use when a thread is about addressing GitHub pull request review comments, requested changes, or PR check feedback.',
+    trigger:
+      'addressing GitHub pull request review comments, requested changes, or PR check feedback',
+    requiredTags: ['github', 'review'],
+  },
+  {
+    id: 'browser-ui-tests',
+    title: 'Fix browser UI test failures',
+    name: 'browser-ui-tests',
+    description:
+      'Use when a workspace thread repeatedly combines Playwright, browser UI behavior, and failing tests.',
+    trigger:
+      'debugging Playwright or browser UI test failures for frontend changes',
+    requiredTags: ['playwright'],
+    anyTags: ['fix', 'test', 'frontend', 'ui'],
+  },
+  {
+    id: 'react-ui-work',
+    title: 'Build and polish React UI',
+    name: 'react-ui-work',
+    description:
+      'Use when threads repeatedly ask for React components, frontend layout fixes, or UI polish.',
+    trigger:
+      'building, fixing, or polishing React frontend UI and responsive layout',
+    requiredTags: ['react'],
+    anyTags: ['frontend', 'ui', 'build', 'fix', 'improve'],
+  },
+  {
+    id: 'backend-api-work',
+    title: 'Implement backend API changes',
+    name: 'backend-api-work',
+    description:
+      'Use when repeated work touches backend routes, API behavior, database shape, or server-side contracts.',
+    trigger:
+      'implementing or fixing backend API, database, or server-side contract changes',
+    requiredTags: ['backend'],
+    anyTags: ['api', 'database', 'sync', 'parser', 'fix', 'build'],
+  },
+  {
+    id: 'sync-ingestion-work',
+    title: 'Improve sync and ingestion behavior',
+    name: 'sync-ingestion-work',
+    description:
+      'Use when repeated threads involve rollout ingestion, parser behavior, sync diagnostics, or thread import quality.',
+    trigger:
+      'debugging or improving rollout sync, ingestion, parser, or thread import behavior',
+    requiredTags: ['sync'],
+    anyTags: ['parser', 'database', 'backend', 'fix', 'improve'],
+  },
+  {
+    id: 'skill-authoring-work',
+    title: 'Design workspace skills',
+    name: 'workspace-skill-design',
+    description:
+      'Use when threads repeatedly discuss skill suggestions, skill authoring, or project-local skill workflows.',
+    trigger:
+      'designing, improving, or generating workspace-specific Codex skills',
+    requiredTags: ['skill'],
+    anyTags: ['build', 'improve', 'configure'],
+  },
+  {
+    id: 'usage-pricing-work',
+    title: 'Maintain usage and pricing dashboards',
+    name: 'usage-pricing-work',
+    description:
+      'Use when repeated threads touch usage charts, token accounting, cost estimates, or pricing data.',
+    trigger:
+      'working on token usage, cost, pricing, and local usage dashboard behavior',
+    requiredTags: ['usage'],
+    anyTags: ['frontend', 'backend', 'database', 'fix', 'improve'],
+  },
+  {
+    id: 'release-publishing',
+    title: 'Publish project releases',
+    name: 'release-publishing',
+    description:
+      'Use when repeated threads involve versioning, release notes, tags, publishing, or changelogs.',
+    trigger: 'preparing, tagging, documenting, or publishing project releases',
+    requiredTags: ['release'],
+    anyTags: ['commit', 'docs', 'github'],
+  },
+];
 
-  const matchedTermWeights = new Map<string, number>();
-  const matchedIssues: Array<{
-    issue: ParsedIssue;
-    matchedTerms: string[];
-  }> = [];
-
-  for (const signal of issueSignals) {
-    const matchedTerms = Array.from(skillTerms).filter((term) =>
-      signal.terms.has(term),
-    );
-    if (matchedTerms.length === 0) {
-      continue;
-    }
-
-    matchedIssues.push({
-      issue: signal.issue,
-      matchedTerms,
-    });
-
-    const issueWeight =
-      signal.issue.needsReview || signal.issue.priority === 'urgent'
-        ? 2
-        : signal.issue.priority === 'high'
-          ? 1.5
-          : 1;
-
-    for (const term of matchedTerms) {
-      matchedTermWeights.set(
-        term,
-        (matchedTermWeights.get(term) ?? 0) + issueWeight,
-      );
-    }
-  }
-
-  if (matchedIssues.length === 0) {
-    return null;
-  }
-
-  const matchedTerms = Array.from(matchedTermWeights.entries())
-    .sort(
-      (left, right) => right[1] - left[1] || left[0].localeCompare(right[0]),
+function normalizeSignalText(value: string): string {
+  return value
+    .replace(/<INSTRUCTIONS>[\s\S]*?(?:<\/INSTRUCTIONS>|$)/gi, ' ')
+    .replace(
+      /<environment_context>[\s\S]*?(?:<\/environment_context>|$)/gi,
+      ' ',
     )
-    .map(([term]) => term)
-    .slice(0, 6);
-  const topIssue = matchedIssues
+    .replace(
+      /<permissions instructions>[\s\S]*?(?:<\/permissions instructions>|$)/gi,
+      ' ',
+    )
+    .replace(/<collaboration_mode>[\s\S]*?(?:<\/collaboration_mode>|$)/gi, ' ')
+    .replace(
+      /<skills_instructions>[\s\S]*?(?:<\/skills_instructions>|$)/gi,
+      ' ',
+    )
+    .replace(
+      /<plugins_instructions>[\s\S]*?(?:<\/plugins_instructions>|$)/gi,
+      ' ',
+    )
+    .replace(/```[\s\S]*?```/g, '[code omitted]')
+    .replace(/\r/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function truncateSignalText(value: string, maxLength: number): string {
+  const normalized = normalizeSignalText(value);
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, maxLength - 1).trim()}...`;
+}
+
+function stripTaskPrefix(value: string): string {
+  return value
+    .replace(/^(user|assistant):\s*/i, '')
+    .replace(/^(can|could|would) you\s+/i, '')
+    .replace(/^please\s+/i, '')
+    .replace(/^(let us|let's)\s+/i, '')
+    .replace(/^i need you to\s+/i, '')
+    .trim();
+}
+
+function upperCaseFirst(value: string): string {
+  if (!value) {
+    return value;
+  }
+
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function cleanTaskTitle(value: string): string {
+  const normalized = stripTaskPrefix(normalizeSignalText(value));
+  const firstSentence =
+    normalized.split(/(?<=[.!?])\s+/)[0]?.replace(/[.!?]+$/g, '') ?? normalized;
+
+  return upperCaseFirst(firstSentence).slice(0, 120);
+}
+
+function isLowValuePrompt(value: string): boolean {
+  const normalized = normalizeSignalText(value).toLowerCase();
+
+  return (
+    normalized.length < 8 ||
+    /^(ok|okay|yes|yep|sure|thanks|thank you|continue|go on)\b/.test(
+      normalized,
+    ) ||
+    /^commit and push(?: all)?$/.test(normalized) ||
+    /^push(?: it| all)?$/.test(normalized) ||
+    /^(implemented|fixed|updated|added|removed|changed|created|wired|verified|ran|reran|documented|built|refactored)\b/.test(
+      normalized,
+    ) ||
+    /^i(?:'m| am| )\b.*\b(found|fixed|updated|implemented|added|created|rerunning|patching)\b/.test(
+      normalized,
+    )
+  );
+}
+
+function selectPrimaryUserPrompt(candidate: ThreadCandidate): string | null {
+  const prompts = candidate.messages
+    .filter((message) => message.role === 'user')
+    .map((message) => truncateSignalText(message.content, 500))
+    .filter(Boolean);
+  const usefulPrompt = prompts.find((prompt) => !isLowValuePrompt(prompt));
+
+  return usefulPrompt ?? prompts[0] ?? null;
+}
+
+function selectAssistantOutcome(candidate: ThreadCandidate): string {
+  const outcomes = candidate.messages
+    .filter((message) => message.role === 'assistant')
+    .map((message) => truncateSignalText(message.content, 500))
+    .filter(Boolean);
+  const outcomePattern =
+    /\b(implemented|fixed|added|updated|changed|created|wired|ran|verified|found|reworked|replaced|documented|built|refactored|removed)\b/i;
+  const usefulOutcome = outcomes
     .slice()
-    .sort(
-      (left, right) =>
-        right.matchedTerms.length - left.matchedTerms.length ||
-        right.issue.updatedAt.localeCompare(left.issue.updatedAt),
-    )[0];
-  const weightedTermTotal = Array.from(matchedTermWeights.values()).reduce(
-    (total, weight) => total + weight,
-    0,
-  );
-  const coverage = matchedIssues.length / Math.max(projectIssueCount, 1);
-  const termBreadth = matchedTerms.length / 6;
-  const matchDepth =
-    weightedTermTotal / Math.max(matchedIssues.length * skillTerms.size, 1);
-  const normalizedScore = Math.min(
-    96,
-    Math.round(
-      coverage * 45 +
-        termBreadth * 30 +
-        Math.min(matchDepth, 1) * 18 +
-        (skill.source === 'project' ? 3 : 0),
-    ),
-  );
+    .reverse()
+    .find((outcome) => outcomePattern.test(outcome));
+
+  return usefulOutcome ?? outcomes.at(-1) ?? '';
+}
+
+function inferTaskTags(text: string): string[] {
+  const tags = new Set<string>();
+
+  for (const definition of TASK_TAGS) {
+    if (definition.patterns.some((pattern) => pattern.test(text))) {
+      tags.add(definition.tag);
+    }
+  }
+
+  if (tags.has('playwright')) {
+    tags.add('test');
+  }
+  if (tags.has('react')) {
+    tags.add('frontend');
+    tags.add('ui');
+  }
+  if (tags.has('ci')) {
+    tags.add('test');
+  }
+  if (
+    tags.has('github') &&
+    /\b(pr|pull request|review comments?)\b/i.test(text)
+  ) {
+    tags.add('review');
+  }
+  if (tags.has('database')) {
+    tags.add('backend');
+  }
+
+  return Array.from(tags).sort((left, right) => left.localeCompare(right));
+}
+
+function buildTaskSummary(prompt: string, outcome: string): string {
+  const source = outcome || prompt;
+  const summary = stripTaskPrefix(truncateSignalText(source, 280));
+
+  return /[.!?]$/.test(summary) ? summary : `${summary}.`;
+}
+
+export function buildSkillThreadSignal(
+  candidate: ThreadCandidate,
+  project: ProjectSummary,
+): SkillThreadSignalRecord | null {
+  const userPrompt = selectPrimaryUserPrompt(candidate);
+  if (!userPrompt || isLowValuePrompt(userPrompt)) {
+    return null;
+  }
+
+  const assistantResponse = selectAssistantOutcome(candidate);
+  const tags = inferTaskTags(`${userPrompt}\n${assistantResponse}`);
+  if (tags.length === 0) {
+    return null;
+  }
 
   return {
-    skill,
-    score: Math.max(normalizedScore, 1),
-    matchedIssueCount: matchedIssues.length,
-    matchedTerms,
-    reasons: [
-      `Matched ${matchedIssues.length} project issue${
-        matchedIssues.length === 1 ? '' : 's'
-      } on ${matchedTerms.slice(0, 4).join(', ')}.`,
-      `Strongest signal: ${topIssue?.issue.title ?? skill.name}.`,
-    ],
+    threadId: candidate.threadId,
+    projectId: project.id,
+    rolloutPath: candidate.rolloutPath,
+    userPrompt,
+    assistantResponse,
+    taskTitle: cleanTaskTitle(userPrompt) || cleanTaskTitle(assistantResponse),
+    taskSummary: buildTaskSummary(userPrompt, assistantResponse),
+    tags,
+    updatedAt: candidate.updatedAt,
   };
 }
 
-function getRecommendationSkills(
-  config: AppConfig,
+function normalizeStoredSkillThreadSignal(
+  signal: SkillThreadSignalRecord,
+): SkillThreadSignalRecord {
+  const userPrompt =
+    truncateSignalText(signal.userPrompt, 500) ||
+    truncateSignalText(signal.taskTitle, 500) ||
+    truncateSignalText(signal.taskSummary, 500);
+  const assistantResponse =
+    truncateSignalText(signal.assistantResponse, 500) ||
+    truncateSignalText(signal.taskSummary, 500);
+  const tags =
+    signal.tags.length > 0
+      ? signal.tags
+      : inferTaskTags(`${userPrompt}\n${assistantResponse}`);
+
+  return {
+    ...signal,
+    userPrompt,
+    assistantResponse,
+    taskTitle: cleanTaskTitle(signal.taskTitle || userPrompt),
+    taskSummary: buildTaskSummary(userPrompt, assistantResponse),
+    tags,
+  };
+}
+
+function isUsableSkillThreadSignal(signal: SkillThreadSignalRecord): boolean {
+  return Boolean(
+    signal.userPrompt &&
+      !isLowValuePrompt(signal.userPrompt) &&
+      signal.tags.length > 0,
+  );
+}
+
+function extractPreviewRoleBlocks(preview: string, role: 'USER' | 'ASSISTANT') {
+  const blocks: string[] = [];
+  const pattern = new RegExp(
+    `(?:^|\\n\\n)${role}:\\n([\\s\\S]*?)(?=\\n\\n(?:USER|ASSISTANT|TOOL):|$)`,
+    'g',
+  );
+
+  for (const match of preview.matchAll(pattern)) {
+    const content = truncateSignalText(match[1] ?? '', 500);
+    if (content) {
+      blocks.push(content);
+    }
+  }
+
+  return blocks;
+}
+
+function buildSkillThreadSignalFromIssue(
+  issue: ParsedIssue,
+): SkillThreadSignalRecord | null {
+  const userPrompt = extractPreviewRoleBlocks(
+    issue.evidence.parsePayloadPreview,
+    'USER',
+  ).find((prompt) => !isLowValuePrompt(prompt));
+  if (!userPrompt || isLowValuePrompt(userPrompt)) {
+    return null;
+  }
+
+  const assistantBlocks = extractPreviewRoleBlocks(
+    issue.evidence.parsePayloadPreview,
+    'ASSISTANT',
+  );
+  const assistantResponse =
+    assistantBlocks.at(-1) ?? truncateSignalText(issue.summary, 500);
+  const tags = inferTaskTags(
+    `${userPrompt}\n${assistantResponse}\n${issue.title}\n${issue.summary}`,
+  );
+  if (tags.length === 0) {
+    return null;
+  }
+
+  return {
+    threadId: issue.threadId,
+    projectId: issue.projectId,
+    rolloutPath: issue.evidence.rolloutPath,
+    userPrompt,
+    assistantResponse,
+    taskTitle: cleanTaskTitle(userPrompt) || issue.title,
+    taskSummary: buildTaskSummary(userPrompt, assistantResponse),
+    tags,
+    updatedAt: issue.updatedAt,
+  };
+}
+
+function ensureProjectSkillThreadSignals(
+  database: BoardsDatabase,
   project: ProjectSummary,
-): SkillSummary[] {
-  return dedupeAndSortSkills([
-    ...listSkillsForRoots(getGlobalSkillRoots(config)),
-    ...listSkillsForRoots(getProjectSkillRoots(project)),
-  ]);
+  existingSignals: SkillThreadSignalRecord[],
+): SkillThreadSignalRecord[] {
+  const existingThreadIds = new Set(
+    existingSignals.map((signal) => signal.threadId),
+  );
+  const issuesByThread = new Map<string, ParsedIssue>();
+
+  for (const issue of database.listProjectIssues(project.id)) {
+    if (issue.kind !== 'parent' || existingThreadIds.has(issue.threadId)) {
+      continue;
+    }
+
+    issuesByThread.set(issue.threadId, issue);
+  }
+
+  if (issuesByThread.size === 0) {
+    return existingSignals;
+  }
+
+  for (const issue of issuesByThread.values()) {
+    const signal = buildSkillThreadSignalFromIssue(issue);
+    if (signal) {
+      database.saveSkillThreadSignal(signal);
+    }
+  }
+
+  return database.listProjectSkillThreadSignals(project.id);
+}
+
+function profileMatches(
+  profile: SkillSuggestionProfile,
+  tags: Set<string>,
+): boolean {
+  return (
+    profile.requiredTags.every((tag) => tags.has(tag)) &&
+    (!profile.anyTags || profile.anyTags.some((tag) => tags.has(tag)))
+  );
+}
+
+function getSignalClusterKey(signal: SkillThreadSignalRecord): string | null {
+  const tags = new Set(signal.tags);
+  const profile = SUGGESTION_PROFILES.find((candidate) =>
+    profileMatches(candidate, tags),
+  );
+  if (profile) {
+    return profile.id;
+  }
+
+  const action = signal.tags.find((tag) => ACTION_TAGS.has(tag));
+  const domains = signal.tags.filter((tag) => !ACTION_TAGS.has(tag));
+  if (!action || domains.length === 0) {
+    return null;
+  }
+
+  return `generic:${action}:${domains.slice(0, 2).join('+')}`;
+}
+
+function countClusterTags(signals: SkillThreadSignalRecord[]): string[] {
+  const counts = new Map<string, number>();
+
+  for (const signal of signals) {
+    for (const tag of signal.tags) {
+      counts.set(tag, (counts.get(tag) ?? 0) + 1);
+    }
+  }
+
+  return Array.from(counts.entries())
+    .sort(
+      (left, right) => right[1] - left[1] || left[0].localeCompare(right[0]),
+    )
+    .map(([tag]) => tag)
+    .slice(0, 6);
+}
+
+function uniqueLimited(values: string[], limit: number): string[] {
+  const seen = new Set<string>();
+  const output: string[] = [];
+
+  for (const value of values) {
+    const normalized = truncateSignalText(value, 220);
+    const identity = normalized.toLowerCase();
+    if (!normalized || seen.has(identity)) {
+      continue;
+    }
+
+    seen.add(identity);
+    output.push(normalized);
+    if (output.length >= limit) {
+      break;
+    }
+  }
+
+  return output;
+}
+
+function createGenericSuggestionMetadata(
+  key: string,
+  tags: string[],
+): {
+  title: string;
+  name: string;
+  description: string;
+  trigger: string;
+} {
+  const [, action = 'improve', domainList = 'workspace'] = key.split(':');
+  const domains = domainList.split('+').filter(Boolean);
+  const actionLabel = TASK_TAG_LABELS.get(action) ?? action;
+  const domainLabel =
+    domains.map((tag) => TASK_TAG_LABELS.get(tag) ?? tag).join(' and ') ||
+    tags
+      .filter((tag) => !ACTION_TAGS.has(tag))
+      .slice(0, 2)
+      .map((tag) => TASK_TAG_LABELS.get(tag) ?? tag)
+      .join(' and ') ||
+    'workspace';
+  const title = `${upperCaseFirst(actionLabel)} ${domainLabel} workflows`;
+  const trigger = `${actionLabel} work around ${domainLabel} in this workspace`;
+
+  return {
+    title,
+    name: slugify(title),
+    description: `Use when recurring threads involve ${trigger}.`,
+    trigger,
+  };
+}
+
+function getSuggestionMetadata(key: string, tags: string[]) {
+  const profile = SUGGESTION_PROFILES.find((candidate) => candidate.id === key);
+  if (profile) {
+    return {
+      title: profile.title,
+      name: profile.name,
+      description: profile.description,
+      trigger: profile.trigger,
+    };
+  }
+
+  return createGenericSuggestionMetadata(key, tags);
+}
+
+function quoteYaml(value: string): string {
+  return JSON.stringify(value.replace(/\s+/g, ' ').trim());
+}
+
+function buildSuggestedSkillBody(params: {
+  title: string;
+  name: string;
+  description: string;
+  trigger: string;
+  tags: string[];
+  evidenceThreadCount: number;
+  examplePrompts: string[];
+  commonOutcomes: string[];
+}): string {
+  const promptBullets = params.examplePrompts
+    .map((prompt) => `- ${prompt}`)
+    .join('\n');
+  const outcomeBullets = params.commonOutcomes
+    .map((outcome) => `- ${outcome}`)
+    .join('\n');
+
+  return [
+    '---',
+    `name: ${params.name}`,
+    `description: ${quoteYaml(params.description)}`,
+    '---',
+    '',
+    `# ${params.title}`,
+    '',
+    `Use this skill when ${params.trigger}.`,
+    '',
+    '## Workflow',
+    '',
+    '- Read the current user request and recent workspace context.',
+    '- Inspect the relevant project files before changing code.',
+    '- Apply the smallest change that handles the repeated task pattern.',
+    '- Run focused verification and report the concrete result.',
+    '',
+    '## Workspace Signals',
+    '',
+    `- Seen in ${params.evidenceThreadCount} imported threads.`,
+    `- Common tags: ${params.tags.join(', ') || 'none'}.`,
+    '',
+    '## Example Prompts',
+    '',
+    promptBullets || '- No prompt examples available.',
+    '',
+    '## Common Outcomes',
+    '',
+    outcomeBullets || '- No outcome examples available.',
+  ].join('\n');
+}
+
+function createSkillSuggestion(
+  project: ProjectSummary,
+  cluster: SuggestionCluster,
+): SkillSuggestion {
+  const signals = cluster.signals
+    .slice()
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  const tags = countClusterTags(signals);
+  const metadata = getSuggestionMetadata(cluster.key, tags);
+  const examplePrompts = uniqueLimited(
+    signals.map((signal) => signal.userPrompt),
+    MAX_EVIDENCE_ITEMS,
+  );
+  const commonOutcomes = uniqueLimited(
+    signals.map((signal) => signal.assistantResponse).filter(Boolean),
+    MAX_EVIDENCE_ITEMS,
+  );
+  const evidence = signals.slice(0, MAX_EVIDENCE_ITEMS).map((signal) => ({
+    threadId: signal.threadId,
+    prompt: signal.userPrompt,
+    outcome: signal.assistantResponse,
+    updatedAt: signal.updatedAt,
+  }));
+  const id = createHash('sha256')
+    .update(`${project.id}:${cluster.key}`)
+    .digest('base64url')
+    .slice(0, 24);
+
+  return {
+    id,
+    title: metadata.title,
+    name: metadata.name,
+    description: metadata.description,
+    trigger: metadata.trigger,
+    tags,
+    evidenceThreadCount: signals.length,
+    examplePrompts,
+    commonOutcomes,
+    evidence,
+    suggestedSkillBody: buildSuggestedSkillBody({
+      ...metadata,
+      tags,
+      evidenceThreadCount: signals.length,
+      examplePrompts,
+      commonOutcomes,
+    }),
+  };
+}
+
+function createSkillSuggestions(
+  project: ProjectSummary,
+  signals: SkillThreadSignalRecord[],
+): SkillSuggestion[] {
+  const clusters = new Map<string, SuggestionCluster>();
+
+  for (const signal of signals) {
+    const key = getSignalClusterKey(signal);
+    if (!key) {
+      continue;
+    }
+
+    const cluster = clusters.get(key) ?? { key, signals: [] };
+    cluster.signals.push(signal);
+    clusters.set(key, cluster);
+  }
+
+  return Array.from(clusters.values())
+    .filter((cluster) => cluster.signals.length >= MIN_SUGGESTION_EVIDENCE)
+    .map((cluster) => createSkillSuggestion(project, cluster))
+    .sort(
+      (left, right) =>
+        right.evidenceThreadCount - left.evidenceThreadCount ||
+        left.title.localeCompare(right.title),
+    )
+    .slice(0, SUGGESTION_LIMIT);
 }
 
 export function listSkills(context: SkillRequestContext): SkillListResponse {
@@ -745,37 +1361,164 @@ export function listSkills(context: SkillRequestContext): SkillListResponse {
   };
 }
 
-export function listSkillRecommendations(
+export function listSkillSuggestions(
   context: SkillRequestContext,
-): SkillRecommendationListResponse {
+): SkillSuggestionListResponse {
   const project = findProject(context.database, context.projectId);
-  const issues = project ? context.database.listProjectIssues(project.id) : [];
-  const issueSignals = createIssueSignals(issues);
-  const skills = project
-    ? getRecommendationSkills(context.config, project)
+  const signals = project
+    ? ensureProjectSkillThreadSignals(
+        context.database,
+        project,
+        context.database.listProjectSkillThreadSignals(project.id),
+      )
+        .map((signal) => normalizeStoredSkillThreadSignal(signal))
+        .filter((signal) => isUsableSkillThreadSignal(signal))
     : [];
-  const recommendations = skills
-    .flatMap((skill) => {
-      const recommendation = scoreSkillRecommendation(
-        skill,
-        issueSignals,
-        issues.length,
-      );
-      return recommendation ? [recommendation] : [];
-    })
-    .sort(
-      (left, right) =>
-        right.score - left.score ||
-        right.matchedIssueCount - left.matchedIssueCount ||
-        left.skill.name.localeCompare(right.skill.name),
-    )
-    .slice(0, RECOMMENDATION_LIMIT);
 
   return {
     generatedAt: new Date().toISOString(),
     project,
-    issueCount: issues.length,
-    recommendations,
+    signalCount: signals.length,
+    suggestions: project ? createSkillSuggestions(project, signals) : [],
+  };
+}
+
+function normalizeInstallSkillName(value: string): string {
+  return slugify(value).slice(0, 80);
+}
+
+function normalizeInstallSkillContent(value: string): string {
+  const normalized = value.replace(/\r/g, '').trim();
+
+  return normalized ? `${normalized}\n` : '';
+}
+
+export function installSuggestedSkill(
+  context: SkillRequestContext & { payload: InstallSkillPayload },
+): { status: number; response: InstallSkillResponse } {
+  const target = context.payload.target;
+  const name = normalizeInstallSkillName(context.payload.name);
+  const content = normalizeInstallSkillContent(context.payload.content);
+
+  if (target !== 'workspace' && target !== 'global') {
+    return {
+      status: 400,
+      response: {
+        ok: false,
+        skill: null,
+        message: 'target must be workspace or global.',
+      },
+    };
+  }
+
+  if (!name) {
+    return {
+      status: 400,
+      response: {
+        ok: false,
+        skill: null,
+        message: 'name is required.',
+      },
+    };
+  }
+
+  if (!content) {
+    return {
+      status: 400,
+      response: {
+        ok: false,
+        skill: null,
+        message: 'content is required.',
+      },
+    };
+  }
+
+  if (content.length > 60_000) {
+    return {
+      status: 400,
+      response: {
+        ok: false,
+        skill: null,
+        message: 'content is too large.',
+      },
+    };
+  }
+
+  const project =
+    target === 'workspace'
+      ? findProject(context.database, context.payload.projectId)
+      : null;
+
+  if (target === 'workspace' && !project) {
+    return {
+      status: 400,
+      response: {
+        ok: false,
+        skill: null,
+        message: 'projectId is required for workspace skills.',
+      },
+    };
+  }
+
+  const root: SkillRoot =
+    target === 'workspace' && project
+      ? {
+          path: join(project.workspacePath, '.agents', 'skills'),
+          source: 'project',
+          sourceLabel: 'Project',
+          sourceName: project.id,
+          projectId: project.id,
+        }
+      : {
+          path: join(resolveAgentsHome(context.config), 'skills'),
+          source: 'agent',
+          sourceLabel: 'Agent',
+          sourceName: 'agent',
+        };
+  const rootPath = resolve(root.path);
+  const skillDirectory = join(rootPath, name);
+  const skillPath = join(skillDirectory, 'SKILL.md');
+
+  if (existsSync(skillPath)) {
+    return {
+      status: 409,
+      response: {
+        ok: false,
+        skill: null,
+        message: `Skill already exists at ${skillPath}.`,
+      },
+    };
+  }
+
+  mkdirSync(skillDirectory, { recursive: true });
+  writeFileSync(skillPath, content);
+
+  const canonicalRootPath = realpathSync(rootPath);
+  const canonicalPath = realpathSync(skillPath);
+  const metadata = parseSkillMetadata(content, name);
+  const skill: SkillSummary = {
+    id: createSkillId(canonicalPath),
+    name: metadata.name,
+    description:
+      metadata.description || context.payload.description?.trim() || '',
+    source: root.source,
+    sourceLabel: root.sourceLabel,
+    sourceName: root.sourceName,
+    path: canonicalPath,
+    relativePath: relative(canonicalRootPath, canonicalPath),
+    projectId: root.projectId ?? null,
+  };
+
+  return {
+    status: 201,
+    response: {
+      ok: true,
+      skill,
+      message:
+        target === 'workspace'
+          ? 'Skill added to workspace.'
+          : 'Skill added globally.',
+    },
   };
 }
 
