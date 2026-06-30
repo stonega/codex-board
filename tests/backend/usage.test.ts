@@ -16,6 +16,7 @@ function writeUsageLog(
     reasoningOutputTokens: number;
     totalTokens: number;
   },
+  model = 'gpt-test',
 ): void {
   writeFileSync(
     path,
@@ -32,7 +33,7 @@ function writeUsageLog(
         type: 'turn_context',
         payload: {
           turn_id: `${sessionId}-turn-1`,
-          model: 'gpt-test',
+          model,
           effort: 'medium',
         },
       }),
@@ -295,6 +296,107 @@ describe('usage api', () => {
         summary: {
           totalTokens: 1800,
         },
+      });
+    } finally {
+      server.close();
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test('uses bundled pricing defaults when no local pricing file exists', async () => {
+    const root = `/tmp/codex-boards-usage-default-pricing-${Date.now()}`;
+    const codexHome = join(root, 'codex-home');
+    const sessionsRoot = join(codexHome, 'sessions');
+    mkdirSync(sessionsRoot, { recursive: true });
+
+    writeUsageLog(
+      join(sessionsRoot, 'active-mini.jsonl'),
+      'session-mini',
+      '2026-06-01T08:00:00.000Z',
+      {
+        inputTokens: 1_000_000,
+        cachedInputTokens: 0,
+        outputTokens: 1_000_000,
+        reasoningOutputTokens: 0,
+        totalTokens: 2_000_000,
+      },
+      'gpt-5.4-mini (<272K context length)',
+    );
+    writeUsageLog(
+      join(sessionsRoot, 'active-frontier.jsonl'),
+      'session-frontier',
+      '2026-06-01T09:00:00.000Z',
+      {
+        inputTokens: 1_000_000,
+        cachedInputTokens: 0,
+        outputTokens: 1_000_000,
+        reasoningOutputTokens: 0,
+        totalTokens: 2_000_000,
+      },
+      'gpt-5.5',
+    );
+
+    const server = createAppServer({
+      port: 7788,
+      sessionsRoot,
+      databasePath: join(root, 'boards.sqlite'),
+      codexHome,
+      openAiBaseUrl: null,
+      openAiApiKey: null,
+      openAiModel: null,
+    });
+
+    try {
+      const response = await server.app.request(
+        '/api/usage?range=custom&start=2026-06-01&end=2026-06-01',
+      );
+
+      expect(response.status).toBe(200);
+      const payload = await response.json();
+      expect(payload).toMatchObject({
+        summary: {
+          totalTokens: 4_000_000,
+          estimatedCostUsd: 40.25,
+        },
+        pricing: {
+          loaded: true,
+          source: {
+            name: 'OpenAI API pricing defaults bundled with Codex Boards',
+          },
+          pricedTokens: 4_000_000,
+          unpricedTokens: 0,
+          unpricedModelCount: 0,
+        },
+      });
+
+      const modelsByName = new Map<
+        string,
+        {
+          pricedAs: string | null;
+          pricingStatus: string;
+          estimatedCostUsd: number | null;
+        }
+      >(
+        (
+          payload.models as Array<{
+            model: string;
+            pricedAs: string | null;
+            pricingStatus: string;
+            estimatedCostUsd: number | null;
+          }>
+        ).map((model) => [model.model, model]),
+      );
+      expect(
+        modelsByName.get('gpt-5.4-mini (<272K context length)'),
+      ).toMatchObject({
+        pricedAs: 'gpt-5.4-mini',
+        pricingStatus: 'priced',
+        estimatedCostUsd: 5.25,
+      });
+      expect(modelsByName.get('gpt-5.5')).toMatchObject({
+        pricedAs: 'gpt-5.5',
+        pricingStatus: 'priced',
+        estimatedCostUsd: 35,
       });
     } finally {
       server.close();

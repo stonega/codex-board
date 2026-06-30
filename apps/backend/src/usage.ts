@@ -45,6 +45,78 @@ interface UsagePricingConfig {
 const USAGE_PRICING_SCHEMA = 'codex-boards-usage-pricing-v1';
 const TOKEN_COUNT_EVENT_TYPE = 'token_count';
 const DAY_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_USAGE_PRICING_SOURCE: NonNullable<UsagePricingSummary['source']> =
+  {
+    name: 'OpenAI API pricing defaults bundled with Codex Boards',
+    url: 'https://developers.openai.com/api/docs/pricing',
+    tier: 'standard',
+    fetchedAt: '2026-06-30T00:00:00.000Z',
+  };
+const DEFAULT_USAGE_PRICING_ALIASES = new Map<string, string>([
+  ['gpt-5.5 (<272K context length)', 'gpt-5.5'],
+  ['gpt-5.5-pro (<272K context length)', 'gpt-5.5-pro'],
+  ['gpt-5.4 (<272K context length)', 'gpt-5.4'],
+  ['gpt-5.4-mini (<272K context length)', 'gpt-5.4-mini'],
+  ['gpt-5.4-nano (<272K context length)', 'gpt-5.4-nano'],
+  ['gpt-5.4-pro (<272K context length)', 'gpt-5.4-pro'],
+]);
+const DEFAULT_USAGE_PRICING_MODELS = new Map<string, UsagePricingRates>([
+  ['gpt-5.5', defaultPricingRates(5, 30, 0.5)],
+  ['gpt-5.5-pro', defaultPricingRates(30, 180)],
+  ['gpt-5.4', defaultPricingRates(2.5, 15, 0.25)],
+  ['gpt-5.4-mini', defaultPricingRates(0.75, 4.5, 0.075)],
+  ['gpt-5.4-nano', defaultPricingRates(0.2, 1.25, 0.02)],
+  ['gpt-5.4-pro', defaultPricingRates(30, 180)],
+  ['gpt-5.2', defaultPricingRates(1.75, 14, 0.175)],
+  ['gpt-5.2-pro', defaultPricingRates(21, 168)],
+  ['gpt-5.1', defaultPricingRates(1.25, 10, 0.125)],
+  ['gpt-5', defaultPricingRates(1.25, 10, 0.125)],
+  ['gpt-5-mini', defaultPricingRates(0.25, 2, 0.025)],
+  ['gpt-5-nano', defaultPricingRates(0.05, 0.4, 0.005)],
+  ['gpt-5-pro', defaultPricingRates(15, 120)],
+  ['gpt-4.1', defaultPricingRates(2, 8, 0.5)],
+  ['gpt-4.1-mini', defaultPricingRates(0.4, 1.6, 0.1)],
+  ['gpt-4.1-nano', defaultPricingRates(0.1, 0.4, 0.025)],
+  ['gpt-4o', defaultPricingRates(2.5, 10, 1.25)],
+  ['gpt-4o-2024-05-13', defaultPricingRates(5, 15)],
+  ['gpt-4o-mini', defaultPricingRates(0.15, 0.6, 0.075)],
+  ['o1', defaultPricingRates(15, 60, 7.5)],
+  ['o1-pro', defaultPricingRates(150, 600)],
+  ['o3-pro', defaultPricingRates(20, 80)],
+  ['o3', defaultPricingRates(2, 8, 0.5)],
+  ['o4-mini', defaultPricingRates(1.1, 4.4, 0.275)],
+  ['o3-mini', defaultPricingRates(1.1, 4.4, 0.55)],
+  ['o1-mini', defaultPricingRates(1.1, 4.4, 0.55)],
+  ['gpt-4-turbo-2024-04-09', defaultPricingRates(10, 30)],
+  ['gpt-4-0125-preview', defaultPricingRates(10, 30)],
+  ['gpt-4-1106-preview', defaultPricingRates(10, 30)],
+  ['gpt-4-1106-vision-preview', defaultPricingRates(10, 30)],
+  ['gpt-4-0613', defaultPricingRates(30, 60)],
+  ['gpt-4-0314', defaultPricingRates(30, 60)],
+  ['gpt-4-32k', defaultPricingRates(60, 120)],
+  ['gpt-3.5-turbo', defaultPricingRates(0.5, 1.5)],
+  ['gpt-3.5-turbo-0125', defaultPricingRates(0.5, 1.5)],
+  ['gpt-3.5-turbo-1106', defaultPricingRates(1, 2)],
+  ['gpt-3.5-turbo-0613', defaultPricingRates(1.5, 2)],
+  ['gpt-3.5-0301', defaultPricingRates(1.5, 2)],
+  ['gpt-3.5-turbo-instruct', defaultPricingRates(1.5, 2)],
+  ['gpt-3.5-turbo-16k-0613', defaultPricingRates(3, 4)],
+  ['davinci-002', defaultPricingRates(2, 2)],
+  ['babbage-002', defaultPricingRates(0.4, 0.4)],
+]);
+
+function defaultPricingRates(
+  inputPerMillion: number,
+  outputPerMillion: number,
+  cachedInputPerMillion = inputPerMillion,
+): UsagePricingRates {
+  return {
+    inputPerMillion,
+    cachedInputPerMillion,
+    outputPerMillion,
+    estimated: false,
+  };
+}
 
 export class UsageService {
   constructor(
@@ -417,28 +489,16 @@ function loadUsagePricing(config: AppConfig): UsagePricingConfig {
     config.usagePricingPath ??
     join(dirname(config.databasePath), 'usage-pricing.json');
   if (!existsSync(path)) {
-    return {
-      loaded: false,
-      path,
-      source: null,
-      models: new Map(),
-      aliases: new Map(),
-    };
+    return createDefaultUsagePricing(path);
   }
 
   const raw = parseObject(readFileSync(path, 'utf8'));
   if (!raw) {
-    return {
-      loaded: false,
-      path,
-      source: null,
-      models: new Map(),
-      aliases: new Map(),
-    };
+    return createDefaultUsagePricing(path);
   }
 
   const modelPayload = asObject(raw.models) ?? raw;
-  const models = new Map<string, UsagePricingRates>();
+  const models = cloneDefaultUsagePricingModels();
   for (const [model, rates] of Object.entries(modelPayload)) {
     if (model.startsWith('_')) {
       continue;
@@ -464,7 +524,7 @@ function loadUsagePricing(config: AppConfig): UsagePricingConfig {
     });
   }
 
-  const aliases = new Map<string, string>();
+  const aliases = new Map(DEFAULT_USAGE_PRICING_ALIASES);
   const aliasPayload = asObject(raw.aliases);
   if (aliasPayload) {
     for (const [source, target] of Object.entries(aliasPayload)) {
@@ -494,6 +554,25 @@ function loadUsagePricing(config: AppConfig): UsagePricingConfig {
   };
 }
 
+function createDefaultUsagePricing(path: string): UsagePricingConfig {
+  return {
+    loaded: true,
+    path,
+    source: DEFAULT_USAGE_PRICING_SOURCE,
+    models: cloneDefaultUsagePricingModels(),
+    aliases: new Map(DEFAULT_USAGE_PRICING_ALIASES),
+  };
+}
+
+function cloneDefaultUsagePricingModels(): Map<string, UsagePricingRates> {
+  return new Map(
+    [...DEFAULT_USAGE_PRICING_MODELS].map(([model, rates]) => [
+      model,
+      { ...rates },
+    ]),
+  );
+}
+
 function estimateEventCostUsd(
   event: UsageEventRecord,
   pricing: UsagePricingConfig,
@@ -515,11 +594,8 @@ function ratesForModel(
   model: string | null,
   pricing: UsagePricingConfig,
 ): UsagePricingRates | null {
-  if (!model) {
-    return null;
-  }
-
-  return pricing.models.get(pricing.aliases.get(model) ?? model) ?? null;
+  const pricedAs = pricedAsModel(model, pricing);
+  return pricedAs ? (pricing.models.get(pricedAs) ?? null) : null;
 }
 
 function pricedAsModel(
@@ -530,12 +606,31 @@ function pricedAsModel(
     return null;
   }
 
-  if (pricing.models.has(model)) {
-    return model;
+  for (const candidate of usageModelCandidates(model)) {
+    if (pricing.models.has(candidate)) {
+      return candidate;
+    }
+
+    const aliasTarget = pricing.aliases.get(candidate);
+    if (aliasTarget && pricing.models.has(aliasTarget)) {
+      return aliasTarget;
+    }
   }
 
-  const aliasTarget = pricing.aliases.get(model);
-  return aliasTarget && pricing.models.has(aliasTarget) ? aliasTarget : null;
+  return null;
+}
+
+function usageModelCandidates(model: string): string[] {
+  const trimmed = model.trim();
+  if (!trimmed) {
+    return [];
+  }
+
+  const withoutContextLength = trimmed
+    .replace(/\s+\(<[^)]*context length\)$/i, '')
+    .trim();
+
+  return [...new Set([trimmed, withoutContextLength].filter(Boolean))];
 }
 
 function resolveUsageRange(query: UsageQuery): UsageSummaryResponse['range'] {
