@@ -1,6 +1,6 @@
 {
   "name": "codex-board",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Local Codex session issue boards.",
   "packageManager": "bun@1.2.19",
   "workspaces": ["apps/*", "packages/*"],
