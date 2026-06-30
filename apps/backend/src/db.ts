@@ -50,6 +50,18 @@ export interface SyncFileState {
   threadId: string | null;
 }
 
+export interface SkillThreadSignalRecord {
+  threadId: string;
+  projectId: string;
+  rolloutPath: string;
+  userPrompt: string;
+  assistantResponse: string;
+  taskTitle: string;
+  taskSummary: string;
+  tags: string[];
+  updatedAt: string;
+}
+
 export class BoardsDatabase {
   private readonly db: Database;
 
@@ -134,6 +146,22 @@ export class BoardsDatabase {
 
       CREATE INDEX IF NOT EXISTS idx_issues_project_id ON issues(project_id);
       CREATE INDEX IF NOT EXISTS idx_issues_parent_issue_id ON issues(parent_issue_id);
+
+      CREATE TABLE IF NOT EXISTS skill_thread_signals (
+        thread_id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        rollout_path TEXT NOT NULL,
+        user_prompt TEXT NOT NULL,
+        assistant_response TEXT NOT NULL,
+        task_title TEXT NOT NULL,
+        task_summary TEXT NOT NULL,
+        tags_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_skill_thread_signals_project_id
+        ON skill_thread_signals(project_id);
 
       CREATE TABLE IF NOT EXISTS saved_views (
         id TEXT PRIMARY KEY,
@@ -422,6 +450,7 @@ export class BoardsDatabase {
 
   resetImportedData(): void {
     this.db.exec(`
+      DELETE FROM skill_thread_signals;
       DELETE FROM issues;
       DELETE FROM projects;
       DELETE FROM sync_files;
@@ -492,6 +521,9 @@ export class BoardsDatabase {
   }
 
   deleteIssuesByRolloutPath(path: string): void {
+    this.db
+      .query('DELETE FROM skill_thread_signals WHERE rollout_path = ?')
+      .run(path);
     this.db.query('DELETE FROM issues WHERE rollout_path = ?').run(path);
   }
 
@@ -587,7 +619,79 @@ export class BoardsDatabase {
   }
 
   deleteThreadIssues(threadId: string): void {
+    this.db
+      .query('DELETE FROM skill_thread_signals WHERE thread_id = ?')
+      .run(threadId);
     this.db.query('DELETE FROM issues WHERE thread_id = ?').run(threadId);
+  }
+
+  saveSkillThreadSignal(signal: SkillThreadSignalRecord): void {
+    this.db
+      .query(
+        `
+        INSERT INTO skill_thread_signals (
+          thread_id, project_id, rollout_path, user_prompt, assistant_response,
+          task_title, task_summary, tags_json, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(thread_id) DO UPDATE SET
+          project_id = excluded.project_id,
+          rollout_path = excluded.rollout_path,
+          user_prompt = excluded.user_prompt,
+          assistant_response = excluded.assistant_response,
+          task_title = excluded.task_title,
+          task_summary = excluded.task_summary,
+          tags_json = excluded.tags_json,
+          updated_at = excluded.updated_at
+      `,
+      )
+      .run(
+        signal.threadId,
+        signal.projectId,
+        signal.rolloutPath,
+        signal.userPrompt,
+        signal.assistantResponse,
+        signal.taskTitle,
+        signal.taskSummary,
+        JSON.stringify(signal.tags),
+        signal.updatedAt,
+      );
+  }
+
+  listProjectSkillThreadSignals(projectId: string): SkillThreadSignalRecord[] {
+    const rows = this.db
+      .query(
+        `
+        SELECT
+          thread_id as threadId,
+          project_id as projectId,
+          rollout_path as rolloutPath,
+          user_prompt as userPrompt,
+          assistant_response as assistantResponse,
+          task_title as taskTitle,
+          task_summary as taskSummary,
+          tags_json as tagsJson,
+          updated_at as updatedAt
+        FROM skill_thread_signals
+        WHERE project_id = ?
+        ORDER BY updated_at DESC, task_title ASC
+      `,
+      )
+      .all(projectId) as Array<
+      Omit<SkillThreadSignalRecord, 'tags'> & { tagsJson: string }
+    >;
+
+    return rows.map((row) => ({
+      threadId: row.threadId,
+      projectId: row.projectId,
+      rolloutPath: row.rolloutPath,
+      userPrompt: row.userPrompt,
+      assistantResponse: row.assistantResponse,
+      taskTitle: row.taskTitle,
+      taskSummary: row.taskSummary,
+      tags: parseJson<string[]>(row.tagsJson),
+      updatedAt: row.updatedAt,
+    }));
   }
 
   pruneProjectsWithoutIssues(): void {

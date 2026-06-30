@@ -36,8 +36,8 @@ Default local URLs:
 
 ## Current Packages
 
-- `apps/backend`: Hono API, rollout sync service, SQLite persistence, OpenAI-compatible parsing, fallback issue extraction, skill discovery, skill recommendations, and Multica export.
-- `apps/web`: React 19 + Vite app with the board UI, issue detail sheets, runtime parser settings, sync history, global skills, project skills, and recommended skill cards.
+- `apps/backend`: Hono API, rollout sync service, SQLite persistence, OpenAI-compatible parsing, fallback issue extraction, skill discovery, workspace skill suggestions, and Multica export.
+- `apps/web`: React 19 + Vite app with the board UI, issue detail sheets, runtime parser settings, sync history, global skills, project skills, and draft skill suggestion cards.
 - `packages/domain`: Shared TypeScript contracts and deterministic helpers for projects, issues, sync diagnostics, parser settings, skills, and exports.
 
 The root workspace is managed with Bun workspaces:
@@ -80,7 +80,7 @@ The web UI supports:
 - first-run provider setup, an onboarding sync screen, homepage sync status, and sync history with per-file parse logs
 - global skills catalog discovered from local Codex, agent, and enabled plugin skill roots
 - project skills catalog discovered from `.codex/skills` and `.agents/skills` inside each project workspace
-- project skill recommendations ranked from issue and thread evidence
+- draft skill suggestions grouped from repeated workspace prompts and assistant outcomes
 - Multica export from the UI or backend CLI
 
 ## Usage Guide
@@ -203,8 +203,9 @@ Primary backend endpoints:
 - `POST /api/views`
 - `GET /api/skills`
 - `GET /api/skills?projectId=...`
-- `GET /api/skills/recommendations?projectId=...`
+- `GET /api/skills/suggestions?projectId=...`
 - `GET /api/skills/:id`
+- `POST /api/skills/install`
 - `POST /api/export/multica`
 
 ## Skills
@@ -220,7 +221,7 @@ Project skill discovery reads:
 - `<project workspace>/.codex/skills`
 - `<project workspace>/.agents/skills`
 
-The Skills page shows the global catalog as cards. Each project page also has an `Issues | Skills` tab bar; the Skills tab shows recommended skills and the local project catalog as card grids. Selecting a card opens a slide-over panel with the full `SKILL.md` content.
+The Skills page shows the global catalog as cards. Each project page also has an `Issues | Skills` tab bar; the Skills tab shows draft skill suggestions and the local project catalog as card grids. Selecting a catalog card opens a slide-over panel with the full `SKILL.md` content. Selecting a draft suggestion opens the same panel with an `Add Skill` menu for workspace or global install.
 
 ## Quality Commands
 

@@ -1,60 +1,36 @@
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 
 import { describe, expect, test } from 'bun:test';
-import type { ParsedIssue } from '@codex-boards/domain';
+import type { ProjectSummary } from '@codex-boards/domain';
 
 import { createAppServer } from '../../apps/backend/src/index';
-import { parseSkillMetadata } from '../../apps/backend/src/skills';
+import {
+  buildSkillThreadSignal,
+  parseSkillMetadata,
+} from '../../apps/backend/src/skills';
 
 function writeSkill(path: string, content: string): void {
   mkdirSync(path, { recursive: true });
   writeFileSync(join(path, 'SKILL.md'), content);
 }
 
-function createIssue(overrides: Partial<ParsedIssue>): ParsedIssue {
+function createProject(workspacePath: string): ProjectSummary {
   return {
-    id: 'issue-1',
-    threadId: 'thread-1',
-    projectId: 'codex-boards',
-    parentIssueId: null,
-    kind: 'parent',
-    title: 'Fix GitHub PR review comments on React UI',
-    status: 'todo',
-    priority: 'high',
-    assignee: null,
-    dueDate: null,
-    tags: ['frontend', 'ci'],
-    summary:
-      'Thread history mentions failing Playwright e2e checks and GitHub Actions review feedback.',
-    updatedAt: '2026-04-09T00:00:00.000Z',
-    parseMode: 'fallback',
-    confidence: 0.72,
-    needsReview: false,
-    git: {
-      repository: 'codex-boards',
-      workspacePath: '/tmp/codex-boards',
-      branch: 'feat/react-ui',
-      commits: [
-        {
-          sha: 'abc123',
-          message: 'Fix React UI review comments',
-          source: 'test',
-        },
-      ],
-      tags: ['ui'],
-    },
-    evidence: {
-      rolloutPath: '/tmp/rollout.jsonl',
-      sessionId: 'session-1',
-      threadId: 'thread-1',
-      warnings: ['Playwright test failed'],
-      parsePayloadPreview:
-        'User asked to address PR review feedback, browser UI layout, and CI failures.',
-    },
+    id: 'codex-boards',
+    name: 'codex-boards',
+    repository: 'codex-boards',
+    workspacePath,
+    issueCount: 0,
     subIssueCount: 0,
-    children: [],
-    ...overrides,
+    needsReviewCount: 0,
+    lastUpdatedAt: '2026-04-09T00:00:00.000Z',
   };
 }
 
@@ -270,45 +246,11 @@ describe('skill api', () => {
     }
   });
 
-  test('recommends skills from project issue and thread history', async () => {
-    const root = `/tmp/codex-boards-skill-recommendations-${Date.now()}`;
+  test('suggests draft skills from repeated workspace thread patterns', async () => {
+    const root = `/tmp/codex-boards-skill-suggestions-${Date.now()}`;
     const codexHome = join(root, 'codex-home');
     const agentsHome = join(root, 'agents-home');
     const projectWorkspace = join(root, 'project-workspace');
-
-    writeSkill(
-      join(codexHome, 'skills', 'github-review'),
-      [
-        '---',
-        'name: github-review',
-        'description: Use when addressing GitHub pull request review feedback and CI failures.',
-        '---',
-        '',
-        '# GitHub Review',
-      ].join('\n'),
-    );
-    writeSkill(
-      join(agentsHome, 'skills', 'react-ui'),
-      [
-        '---',
-        'name: react-ui',
-        'description: Use when building React frontend UI and debugging layout problems.',
-        '---',
-        '',
-        '# React UI',
-      ].join('\n'),
-    );
-    writeSkill(
-      join(projectWorkspace, '.agents', 'skills', 'playwright-e2e'),
-      [
-        '---',
-        'name: playwright-e2e',
-        'description: Use when testing browser UI with Playwright e2e checks.',
-        '---',
-        '',
-        '# Playwright E2E',
-      ].join('\n'),
-    );
 
     const server = createAppServer({
       port: 7788,
@@ -322,25 +264,86 @@ describe('skill api', () => {
     });
 
     try {
-      server.database.upsertProject({
-        id: 'codex-boards',
-        name: 'codex-boards',
-        repository: 'codex-boards',
-        workspacePath: projectWorkspace,
-        issueCount: 1,
-        subIssueCount: 0,
-        needsReviewCount: 0,
-        lastUpdatedAt: '2026-04-09T00:00:00.000Z',
-      });
-      server.database.upsertIssue(createIssue({}));
+      const project = createProject(projectWorkspace);
+      server.database.upsertProject(project);
+
+      const candidates = [
+        {
+          threadId: 'thread-playwright-1',
+          userPrompt:
+            'Fix the failing Playwright e2e checks in the React UI after the layout change.',
+          assistantResponse:
+            'Fixed the React layout regression and reran the Playwright e2e checks.',
+          updatedAt: '2026-04-09T02:00:00.000Z',
+        },
+        {
+          threadId: 'thread-playwright-2',
+          userPrompt:
+            'The browser UI test is failing on mobile. Can you debug the Playwright run?',
+          assistantResponse:
+            'Updated the responsive UI behavior and verified the Playwright browser test.',
+          updatedAt: '2026-04-09T03:00:00.000Z',
+        },
+        {
+          threadId: 'thread-react-1',
+          userPrompt: 'Build a React settings panel for parser configuration.',
+          assistantResponse:
+            'Implemented the React settings panel and connected the backend API.',
+          updatedAt: '2026-04-09T04:00:00.000Z',
+        },
+      ];
+
+      for (const candidate of candidates) {
+        const signal = buildSkillThreadSignal(
+          {
+            sessionId: candidate.threadId,
+            threadId: candidate.threadId,
+            rolloutPath: join(root, `${candidate.threadId}.jsonl`),
+            startedAt: candidate.updatedAt,
+            updatedAt: candidate.updatedAt,
+            workspacePath: projectWorkspace,
+            repository: 'codex-boards',
+            branch: 'feat/react-ui',
+            messages: [
+              {
+                role: 'user',
+                content: candidate.userPrompt,
+              },
+              {
+                role: 'assistant',
+                content: candidate.assistantResponse,
+              },
+            ],
+            commands: [],
+            warnings: [],
+            git: {
+              repository: 'codex-boards',
+              workspacePath: projectWorkspace,
+              branch: 'feat/react-ui',
+              commits: [],
+              tags: [],
+            },
+          },
+          project,
+        );
+        expect(signal).not.toBeNull();
+        if (signal) {
+          server.database.saveSkillThreadSignal(signal);
+        }
+      }
 
       const missingProjectResponse = await server.app.request(
-        '/api/skills/recommendations',
+        '/api/skills/suggestions',
       );
       expect(missingProjectResponse.status).toBe(400);
 
-      const response = await server.app.request(
+      const removedRecommendationsResponse = await server.app.request(
         '/api/skills/recommendations?projectId=codex-boards',
+      );
+      expect(removedRecommendationsResponse.status).toBe(404);
+
+      const response = await server.app.request(
+        '/api/skills/suggestions?projectId=codex-boards',
       );
       expect(response.status).toBe(200);
       const payload = await response.json();
@@ -349,32 +352,142 @@ describe('skill api', () => {
         project: {
           id: 'codex-boards',
         },
-        issueCount: 1,
+        signalCount: 3,
       });
 
-      const recommendationNames = payload.recommendations.map(
-        (recommendation: { skill: { name: string } }) =>
-          recommendation.skill.name,
+      const browserSuggestion = payload.suggestions.find(
+        (suggestion: { name: string }) =>
+          suggestion.name === 'browser-ui-tests',
       );
-      expect(recommendationNames).toContain('github-review');
-      expect(recommendationNames).toContain('react-ui');
-      expect(recommendationNames).toContain('playwright-e2e');
+      expect(browserSuggestion).toMatchObject({
+        title: 'Fix browser UI test failures',
+        evidenceThreadCount: 2,
+        tags: expect.arrayContaining(['playwright', 'test', 'ui']),
+      });
+      expect(browserSuggestion.examplePrompts).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining('Playwright e2e checks'),
+        ]),
+      );
+      expect(browserSuggestion.suggestedSkillBody).toContain(
+        '# Fix browser UI test failures',
+      );
+    } finally {
+      server.close();
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
 
-      const projectRecommendation = payload.recommendations.find(
-        (recommendation: { skill: { name: string } }) =>
-          recommendation.skill.name === 'playwright-e2e',
-      );
-      expect(projectRecommendation).toMatchObject({
-        skill: {
-          source: 'project',
-          projectId: 'codex-boards',
+  test('installs draft skills into workspace or global skill roots', async () => {
+    const root = `/tmp/codex-boards-skill-install-${Date.now()}`;
+    const codexHome = join(root, 'codex-home');
+    const agentsHome = join(root, 'agents-home');
+    const projectWorkspace = join(root, 'project-workspace');
+    const project = createProject(projectWorkspace);
+    const server = createAppServer({
+      port: 7788,
+      sessionsRoot: join(root, 'sessions'),
+      databasePath: join(root, 'boards.sqlite'),
+      codexHome,
+      agentsHome,
+      openAiBaseUrl: null,
+      openAiApiKey: null,
+      openAiModel: null,
+    });
+
+    try {
+      server.database.upsertProject(project);
+
+      const workspaceResponse = await server.app.request(
+        '/api/skills/install',
+        {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            target: 'workspace',
+            projectId: project.id,
+            name: 'Browser UI Tests',
+            description: 'Use when debugging browser UI tests.',
+            content: [
+              '---',
+              'name: browser-ui-tests',
+              'description: Use when debugging browser UI tests.',
+              '---',
+              '',
+              '# Browser UI Tests',
+            ].join('\n'),
+          }),
         },
-        matchedIssueCount: 1,
-      });
-      expect(projectRecommendation.score).toBeGreaterThan(0);
-      expect(projectRecommendation.matchedTerms).toEqual(
-        expect.arrayContaining(['playwright', 'e2e']),
       );
+      expect(workspaceResponse.status).toBe(201);
+      expect(await workspaceResponse.json()).toMatchObject({
+        ok: true,
+        skill: {
+          name: 'browser-ui-tests',
+          source: 'project',
+          projectId: project.id,
+        },
+      });
+      const workspaceSkillPath = join(
+        projectWorkspace,
+        '.agents',
+        'skills',
+        'browser-ui-tests',
+        'SKILL.md',
+      );
+      expect(existsSync(workspaceSkillPath)).toBe(true);
+      expect(readFileSync(workspaceSkillPath, 'utf8')).toContain(
+        '# Browser UI Tests',
+      );
+
+      const conflictResponse = await server.app.request('/api/skills/install', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          target: 'workspace',
+          projectId: project.id,
+          name: 'browser-ui-tests',
+          content: '# Replacement',
+        }),
+      });
+      expect(conflictResponse.status).toBe(409);
+
+      const globalResponse = await server.app.request('/api/skills/install', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          target: 'global',
+          name: 'Release Publishing',
+          content: [
+            '---',
+            'name: release-publishing',
+            'description: Use when publishing releases.',
+            '---',
+            '',
+            '# Release Publishing',
+          ].join('\n'),
+        }),
+      });
+      expect(globalResponse.status).toBe(201);
+      expect(await globalResponse.json()).toMatchObject({
+        ok: true,
+        skill: {
+          name: 'release-publishing',
+          source: 'agent',
+          projectId: null,
+        },
+      });
+      expect(
+        existsSync(
+          join(agentsHome, 'skills', 'release-publishing', 'SKILL.md'),
+        ),
+      ).toBe(true);
     } finally {
       server.close();
       rmSync(root, { force: true, recursive: true });

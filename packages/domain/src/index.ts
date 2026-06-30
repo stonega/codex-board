@@ -85,12 +85,25 @@ export interface SkillDetail extends SkillSummary {
   content: string;
 }
 
-export interface SkillRecommendation {
-  skill: SkillSummary;
-  score: number;
-  matchedIssueCount: number;
-  matchedTerms: string[];
-  reasons: string[];
+export interface SkillSuggestionEvidence {
+  threadId: string;
+  prompt: string;
+  outcome: string;
+  updatedAt: string;
+}
+
+export interface SkillSuggestion {
+  id: string;
+  title: string;
+  name: string;
+  description: string;
+  trigger: string;
+  tags: string[];
+  evidenceThreadCount: number;
+  examplePrompts: string[];
+  commonOutcomes: string[];
+  evidence: SkillSuggestionEvidence[];
+  suggestedSkillBody: string;
 }
 
 export type UsageRangePreset = 'last-7-days' | 'last-30-days' | 'custom';
@@ -291,11 +304,27 @@ export interface SkillDetailResponse {
   skill: SkillDetail | null;
 }
 
-export interface SkillRecommendationListResponse {
+export interface SkillSuggestionListResponse {
   generatedAt: string;
   project: ProjectSummary | null;
-  issueCount: number;
-  recommendations: SkillRecommendation[];
+  signalCount: number;
+  suggestions: SkillSuggestion[];
+}
+
+export type SkillInstallTarget = 'workspace' | 'global';
+
+export interface InstallSkillPayload {
+  target: SkillInstallTarget;
+  projectId?: string | null;
+  name: string;
+  description?: string | null;
+  content: string;
+}
+
+export interface InstallSkillResponse {
+  ok: boolean;
+  skill: SkillSummary | null;
+  message: string;
 }
 
 export interface SavedViewListResponse {

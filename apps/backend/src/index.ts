@@ -7,6 +7,7 @@ import { cors } from 'hono/cors';
 
 import {
   type ExportMulticaPayload,
+  type InstallSkillPayload,
   type IssueFilters,
   type ParsedIssue,
   type ParserProvider,
@@ -28,7 +29,12 @@ import {
   updateParserSettings,
 } from './config';
 import { BoardsDatabase } from './db';
-import { getSkillDetail, listSkillRecommendations, listSkills } from './skills';
+import {
+  getSkillDetail,
+  installSuggestedSkill,
+  listSkillSuggestions,
+  listSkills,
+} from './skills';
 import { SyncCoordinator } from './sync-coordinator';
 import { SyncService } from './sync-service';
 import { UsageService } from './usage';
@@ -160,19 +166,51 @@ export function createAppServer(config: AppConfig = getConfig()) {
     );
   });
 
-  app.get('/api/skills/recommendations', (context) => {
+  app.get('/api/skills/suggestions', (context) => {
     const projectId = context.req.query().projectId ?? null;
     if (!projectId) {
       return context.json({ message: 'projectId is required' }, 400);
     }
 
     return context.json(
-      listSkillRecommendations({
+      listSkillSuggestions({
         config,
         database,
         projectId,
       }),
     );
+  });
+
+  app.post('/api/skills/install', async (context) => {
+    let payload: InstallSkillPayload;
+    try {
+      payload = (await context.req.json()) as InstallSkillPayload;
+    } catch {
+      return context.json(
+        {
+          ok: false,
+          skill: null,
+          message: 'Invalid JSON payload.',
+        },
+        400,
+      );
+    }
+
+    const result = installSuggestedSkill({
+      config,
+      database,
+      projectId: payload.projectId ?? null,
+      payload,
+    });
+
+    if (result.status === 201) {
+      return context.json(result.response, 201);
+    }
+    if (result.status === 409) {
+      return context.json(result.response, 409);
+    }
+
+    return context.json(result.response, 400);
   });
 
   app.get('/api/skills/:id', (context) => {

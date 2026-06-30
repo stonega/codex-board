@@ -17,6 +17,7 @@ import {
   listRolloutFiles,
   parseRolloutFile,
 } from './rollout-parser';
+import { buildSkillThreadSignal } from './skills';
 
 export interface SyncProgressEvent {
   phase: SyncPhase;
@@ -250,6 +251,11 @@ export class SyncService {
           needsReviewCount,
           lastUpdatedAt: candidate.updatedAt,
         });
+
+        const skillSignal = buildSkillThreadSignal(candidate, built.project);
+        if (skillSignal) {
+          this.database.saveSkillThreadSignal(skillSignal);
+        }
 
         for (const issue of built.issues) {
           this.database.upsertIssue(issue);
