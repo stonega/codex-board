@@ -16,6 +16,7 @@ import {
   type SyncRequestPayload,
   type SyncRunListResponse,
   type SyncStatusResponse,
+  type UpdateSkillEnabledPayload,
   slugify,
 } from '../../../packages/domain/src/index';
 
@@ -34,6 +35,7 @@ import {
   installSuggestedSkill,
   listSkillSuggestions,
   listSkills,
+  updateSkillEnabled,
 } from './skills';
 import { SyncCoordinator } from './sync-coordinator';
 import { SyncService } from './sync-service';
@@ -211,6 +213,40 @@ export function createAppServer(config: AppConfig = getConfig()) {
     }
 
     return context.json(result.response, 400);
+  });
+
+  app.patch('/api/skills/:id/enabled', async (context) => {
+    let payload: UpdateSkillEnabledPayload;
+    try {
+      payload = (await context.req.json()) as UpdateSkillEnabledPayload;
+    } catch {
+      return context.json(
+        {
+          ok: false,
+          skill: null,
+          message: 'Invalid JSON payload.',
+          restartRequired: false,
+        },
+        400,
+      );
+    }
+
+    const result = updateSkillEnabled({
+      config,
+      database,
+      projectId: context.req.query().projectId ?? null,
+      skillId: context.req.param('id'),
+      payload,
+    });
+
+    if (result.status === 404) {
+      return context.json(result.response, 404);
+    }
+    if (result.status === 400) {
+      return context.json(result.response, 400);
+    }
+
+    return context.json(result.response);
   });
 
   app.get('/api/skills/:id', (context) => {

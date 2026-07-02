@@ -23,6 +23,8 @@ import {
   type SkillSuggestion,
   type SkillSuggestionListResponse,
   type SkillSummary,
+  type UpdateSkillEnabledPayload,
+  type UpdateSkillEnabledResponse,
   slugify,
 } from '../../../packages/domain/src/index';
 
@@ -41,6 +43,19 @@ interface SkillRoot {
 interface SkillMetadata {
   name: string;
   description: string;
+}
+
+interface SkillConfigBlock {
+  startLine: number;
+  endLine: number;
+  path: string | null;
+  enabled: boolean | null;
+}
+
+interface SkillConfigFile {
+  content: string;
+  lines: string[];
+  blocks: SkillConfigBlock[];
 }
 
 interface PluginMetadata {
@@ -127,6 +142,233 @@ export function parseSkillMetadata(
 
 function createSkillId(path: string): string {
   return createHash('sha256').update(path).digest('base64url').slice(0, 32);
+}
+
+function getCodexConfigPath(config: AppConfig): string {
+  return join(resolveCodexHome(config), 'config.toml');
+}
+
+function expandHomePath(path: string): string {
+  return path === '~' || path.startsWith('~/')
+    ? join(homedir(), path.slice(2))
+    : path;
+}
+
+function canonicalizeSkillConfigPath(path: string): string {
+  const expanded = expandHomePath(path);
+
+  try {
+    return realpathSync(expanded);
+  } catch {
+    return resolve(expanded);
+  }
+}
+
+function parseTomlString(value: string): string | null {
+  const trimmed = value.trim();
+  const basicString = trimmed.match(/^"((?:\\.|[^"\\])*)"/);
+  if (basicString) {
+    try {
+      return JSON.parse(`"${basicString[1]}"`) as string;
+    } catch {
+      return basicString[1].replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+    }
+  }
+
+  const literalString = trimmed.match(/^'([^']*)'/);
+  if (literalString) {
+    return literalString[1];
+  }
+
+  return trimmed.match(/^([^\s#]+)/)?.[1] ?? null;
+}
+
+function parseTomlBoolean(value: string): boolean | null {
+  const booleanMatch = value.trim().match(/^(true|false)\b/);
+  if (!booleanMatch) {
+    return null;
+  }
+
+  return booleanMatch[1] === 'true';
+}
+
+function splitTomlLines(content: string): string[] {
+  if (!content) {
+    return [];
+  }
+
+  const lines = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  if (lines.at(-1) === '') {
+    lines.pop();
+  }
+
+  return lines;
+}
+
+function parseSkillConfigFileContent(content: string): SkillConfigFile {
+  const lines = splitTomlLines(content);
+  const blocks: SkillConfigBlock[] = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    if (lines[index].trim() !== '[[skills.config]]') {
+      continue;
+    }
+
+    const startLine = index;
+    let endLine = index + 1;
+    while (endLine < lines.length && !lines[endLine].trim().startsWith('[')) {
+      endLine += 1;
+    }
+
+    let path: string | null = null;
+    let enabled: boolean | null = null;
+    for (const rawLine of lines.slice(startLine + 1, endLine)) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith('#')) {
+        continue;
+      }
+
+      const pathMatch = line.match(/^path\s*=\s*(.+)$/);
+      if (pathMatch) {
+        path = parseTomlString(pathMatch[1]);
+        continue;
+      }
+
+      const enabledMatch = line.match(/^enabled\s*=\s*(.+)$/);
+      if (enabledMatch) {
+        enabled = parseTomlBoolean(enabledMatch[1]);
+      }
+    }
+
+    blocks.push({
+      startLine,
+      endLine,
+      path,
+      enabled,
+    });
+    index = endLine - 1;
+  }
+
+  return {
+    content,
+    lines,
+    blocks,
+  };
+}
+
+function readSkillConfigFile(configPath: string): SkillConfigFile {
+  if (!existsSync(configPath)) {
+    return parseSkillConfigFileContent('');
+  }
+
+  try {
+    return parseSkillConfigFileContent(readFileSync(configPath, 'utf8'));
+  } catch {
+    return parseSkillConfigFileContent('');
+  }
+}
+
+function readSkillEnabledByPath(config: AppConfig): Map<string, boolean> {
+  const configFile = readSkillConfigFile(getCodexConfigPath(config));
+  const enabledByPath = new Map<string, boolean>();
+
+  for (const block of configFile.blocks) {
+    if (!block.path) {
+      continue;
+    }
+
+    enabledByPath.set(
+      canonicalizeSkillConfigPath(block.path),
+      block.enabled ?? true,
+    );
+  }
+
+  return enabledByPath;
+}
+
+function formatTomlString(value: string): string {
+  return `"${value
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, '\\n')}"`;
+}
+
+function formatSkillConfigBlock(path: string, enabled: boolean): string[] {
+  return [
+    '[[skills.config]]',
+    `path = ${formatTomlString(path)}`,
+    `enabled = ${enabled ? 'true' : 'false'}`,
+  ];
+}
+
+function trimTrailingEmptyLines(lines: string[]): string[] {
+  const nextLines = [...lines];
+
+  while (nextLines.at(-1) === '') {
+    nextLines.pop();
+  }
+
+  return nextLines;
+}
+
+function removeSkillConfigBlocks(
+  configFile: SkillConfigFile,
+  canonicalPath: string,
+): string[] {
+  const ranges = configFile.blocks
+    .filter(
+      (block) =>
+        block.path && canonicalizeSkillConfigPath(block.path) === canonicalPath,
+    )
+    .map((block) => [block.startLine, block.endLine] as const);
+
+  if (ranges.length === 0) {
+    return configFile.lines;
+  }
+
+  return configFile.lines.filter(
+    (_line, index) =>
+      !ranges.some(([startLine, endLine]) => {
+        return index >= startLine && index < endLine;
+      }),
+  );
+}
+
+function updateSkillEnabledConfig(
+  config: AppConfig,
+  skillPath: string,
+  enabled: boolean,
+): { changed: boolean; configPath: string } {
+  const configPath = getCodexConfigPath(config);
+  const configFile = readSkillConfigFile(configPath);
+  const canonicalPath = canonicalizeSkillConfigPath(skillPath);
+  const nextLines = trimTrailingEmptyLines(
+    removeSkillConfigBlocks(configFile, canonicalPath),
+  );
+
+  if (!enabled) {
+    if (nextLines.length > 0) {
+      nextLines.push('');
+    }
+    nextLines.push(...formatSkillConfigBlock(skillPath, false));
+  }
+
+  const nextContent = nextLines.length > 0 ? `${nextLines.join('\n')}\n` : '';
+
+  if (nextContent === configFile.content) {
+    return {
+      changed: false,
+      configPath,
+    };
+  }
+
+  mkdirSync(dirname(configPath), { recursive: true });
+  writeFileSync(configPath, nextContent);
+
+  return {
+    changed: true,
+    configPath,
+  };
 }
 
 function readJsonFile<T>(path: string): T | null {
@@ -343,7 +585,10 @@ function canonicalizeRoot(root: SkillRoot): SkillRoot | null {
   }
 }
 
-function readSkillsFromRoot(root: SkillRoot): SkillSummary[] {
+function readSkillsFromRoot(
+  root: SkillRoot,
+  enabledByPath: Map<string, boolean>,
+): SkillSummary[] {
   const canonicalRoot = canonicalizeRoot(root);
   if (!canonicalRoot) {
     return [];
@@ -370,6 +615,7 @@ function readSkillsFromRoot(root: SkillRoot): SkillSummary[] {
         id: createSkillId(canonicalPath),
         name: metadata.name,
         description: metadata.description,
+        enabled: enabledByPath.get(canonicalPath) ?? true,
         source: canonicalRoot.source,
         sourceLabel: canonicalRoot.sourceLabel,
         sourceName: canonicalRoot.sourceName,
@@ -422,8 +668,13 @@ function findProject(
   );
 }
 
-function listSkillsForRoots(roots: SkillRoot[]): SkillSummary[] {
-  return dedupeAndSortSkills(roots.flatMap((root) => readSkillsFromRoot(root)));
+function listSkillsForRoots(
+  roots: SkillRoot[],
+  enabledByPath: Map<string, boolean>,
+): SkillSummary[] {
+  return dedupeAndSortSkills(
+    roots.flatMap((root) => readSkillsFromRoot(root, enabledByPath)),
+  );
 }
 
 function getScopedSkills(context: SkillRequestContext): {
@@ -432,19 +683,25 @@ function getScopedSkills(context: SkillRequestContext): {
   skills: SkillSummary[];
 } {
   const project = findProject(context.database, context.projectId);
+  const enabledByPath = readSkillEnabledByPath(context.config);
 
   if (context.projectId) {
     return {
       project,
       scope: 'project',
-      skills: project ? listSkillsForRoots(getProjectSkillRoots(project)) : [],
+      skills: project
+        ? listSkillsForRoots(getProjectSkillRoots(project), enabledByPath)
+        : [],
     };
   }
 
   return {
     project: null,
     scope: 'global',
-    skills: listSkillsForRoots(getGlobalSkillRoots(context.config)),
+    skills: listSkillsForRoots(
+      getGlobalSkillRoots(context.config),
+      enabledByPath,
+    ),
   };
 }
 
@@ -1501,6 +1758,7 @@ export function installSuggestedSkill(
     name: metadata.name,
     description:
       metadata.description || context.payload.description?.trim() || '',
+    enabled: true,
     source: root.source,
     sourceLabel: root.sourceLabel,
     sourceName: root.sourceName,
@@ -1518,6 +1776,66 @@ export function installSuggestedSkill(
         target === 'workspace'
           ? 'Skill added to workspace.'
           : 'Skill added globally.',
+    },
+  };
+}
+
+export function updateSkillEnabled(
+  context: SkillRequestContext & {
+    payload: UpdateSkillEnabledPayload;
+    skillId: string;
+  },
+): { status: number; response: UpdateSkillEnabledResponse } {
+  if (typeof context.payload.enabled !== 'boolean') {
+    return {
+      status: 400,
+      response: {
+        ok: false,
+        skill: null,
+        message: 'enabled must be a boolean.',
+        restartRequired: false,
+      },
+    };
+  }
+
+  const scoped = getScopedSkills(context);
+  const summary =
+    scoped.skills.find((skill) => skill.id === context.skillId) ?? null;
+
+  if (!summary) {
+    return {
+      status: 404,
+      response: {
+        ok: false,
+        skill: null,
+        message: 'Skill not found.',
+        restartRequired: false,
+      },
+    };
+  }
+
+  const update = updateSkillEnabledConfig(
+    context.config,
+    summary.path,
+    context.payload.enabled,
+  );
+  const refreshed = getScopedSkills(context).skills.find(
+    (skill) => skill.id === context.skillId,
+  ) ?? {
+    ...summary,
+    enabled: context.payload.enabled,
+  };
+  const stateLabel = context.payload.enabled ? 'enabled' : 'disabled';
+
+  return {
+    status: 200,
+    response: {
+      ok: true,
+      skill: refreshed,
+      message: update.changed
+        ? `Skill ${stateLabel}. Restart Codex for this change to affect skill invocation.`
+        : `Skill is already ${stateLabel}.`,
+      restartRequired: update.changed,
     },
   };
 }

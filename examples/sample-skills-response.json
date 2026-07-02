@@ -7,6 +7,7 @@
       "id": "Jv0cXgwxD-MXbyv0jZctATiu0UY8xC0V",
       "name": "frontend-app-builder",
       "description": "Use for new frontend applications, dashboards, games, creative websites, hero sections, and visually driven UI from scratch.",
+      "enabled": true,
       "source": "plugin",
       "sourceLabel": "Plugin: Build Web Apps",
       "sourceName": "build-web-apps",

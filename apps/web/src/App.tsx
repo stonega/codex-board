@@ -59,6 +59,8 @@ import type {
   SyncStatusResponse,
   SyncTrigger,
   UpdateSettingsPayload,
+  UpdateSkillEnabledPayload,
+  UpdateSkillEnabledResponse,
 } from '@codex-boards/domain';
 
 import { UsagePage } from './UsagePage';
@@ -194,6 +196,22 @@ async function postJson<T>(path: string, body?: unknown): Promise<T> {
   const apiBaseUrl = await resolveApiBaseUrl();
   const response = await fetch(`${apiBaseUrl}${path}`, {
     method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new Error(`Request failed with ${response.status}`);
+  }
+
+  return (await response.json()) as T;
+}
+
+async function patchJson<T>(path: string, body?: unknown): Promise<T> {
+  const apiBaseUrl = await resolveApiBaseUrl();
+  const response = await fetch(`${apiBaseUrl}${path}`, {
+    method: 'PATCH',
     headers: {
       'content-type': 'application/json',
     },
@@ -585,7 +603,11 @@ function SkillList({
     <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 2xl:grid-cols-3">
       {skills.map((skill) => (
         <button
-          className="group flex min-h-40 w-full min-w-0 flex-col rounded-lg border border-notion-border bg-white p-4 text-left shadow-[0_1px_2px_rgba(15,15,15,0.03)] transition-colors hover:border-notion-muted/30 hover:bg-notion-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-notion-blue focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+          className={`group flex min-h-40 w-full min-w-0 flex-col rounded-lg border p-4 text-left shadow-[0_1px_2px_rgba(15,15,15,0.03)] transition-colors hover:border-notion-muted/30 hover:bg-notion-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-notion-blue focus-visible:ring-offset-2 focus-visible:ring-offset-white ${
+            skill.enabled
+              ? 'border-notion-border bg-white'
+              : 'border-notion-border bg-[#f7f7f5]'
+          }`}
           key={skill.id}
           onClick={() => onOpen(skill.id)}
           type="button"
@@ -599,7 +621,18 @@ function SkillList({
                 {skill.relativePath}
               </span>
             </div>
-            <Badge>{skill.sourceLabel}</Badge>
+            <div className="flex flex-wrap gap-1.5">
+              <Badge>{skill.sourceLabel}</Badge>
+              <Badge
+                className={
+                  skill.enabled
+                    ? 'bg-emerald-50 text-emerald-700'
+                    : 'bg-rose-50 text-rose-700'
+                }
+              >
+                {skill.enabled ? 'Enabled' : 'Disabled'}
+              </Badge>
+            </div>
           </div>
 
           <p className="line-clamp-4 text-sm leading-relaxed text-notion-muted">
@@ -620,14 +653,23 @@ function SkillDetailSheet({
   skill,
   onClose,
   onAddDraftSkill,
+  onUpdateSkillEnabled,
   addingDraftSkill,
   draftSkillMessage,
+  updatingSkillEnabled,
+  skillEnablementMessage,
 }: {
   skill: SkillDetail | null;
   onClose: () => void;
   onAddDraftSkill?: (target: SkillInstallTarget) => Promise<void>;
+  onUpdateSkillEnabled?: (
+    skill: SkillDetail,
+    enabled: boolean,
+  ) => Promise<void>;
   addingDraftSkill?: boolean;
   draftSkillMessage?: string | null;
+  updatingSkillEnabled?: boolean;
+  skillEnablementMessage?: string | null;
 }) {
   const [addMenuState, setAddMenuState] = useState<{
     skillId: string | null;
@@ -661,7 +703,40 @@ function SkillDetailSheet({
                 </p>
               ) : null}
             </div>
-            <div className="flex shrink-0 items-center gap-2">
+            <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+              {!isDraftSuggestion && onUpdateSkillEnabled ? (
+                <button
+                  aria-checked={skill.enabled}
+                  className={`inline-flex h-7 items-center gap-2 rounded-md border px-2.5 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-notion-blue focus-visible:ring-offset-2 ${
+                    skill.enabled
+                      ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                      : 'border-rose-200 bg-rose-50 text-rose-700'
+                  }`}
+                  disabled={updatingSkillEnabled}
+                  onClick={() =>
+                    void onUpdateSkillEnabled(skill, !skill.enabled)
+                  }
+                  role="switch"
+                  type="button"
+                >
+                  <span
+                    className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${
+                      skill.enabled ? 'bg-emerald-500' : 'bg-rose-400'
+                    }`}
+                  >
+                    <span
+                      className={`h-3 w-3 rounded-full bg-white shadow-sm transition-transform ${
+                        skill.enabled ? 'translate-x-3.5' : 'translate-x-0.5'
+                      }`}
+                    />
+                  </span>
+                  {updatingSkillEnabled
+                    ? 'Saving...'
+                    : skill.enabled
+                      ? 'Enabled'
+                      : 'Disabled'}
+                </button>
+              ) : null}
               {isDraftSuggestion && onAddDraftSkill ? (
                 <div className="relative">
                   <Button
@@ -716,6 +791,12 @@ function SkillDetailSheet({
           {draftSkillMessage ? (
             <p className="rounded border border-notion-border bg-notion-hover p-3 text-sm text-notion-muted">
               {draftSkillMessage}
+            </p>
+          ) : null}
+
+          {skillEnablementMessage ? (
+            <p className="rounded border border-notion-border bg-notion-hover p-3 text-sm text-notion-muted">
+              {skillEnablementMessage}
             </p>
           ) : null}
 
@@ -1432,9 +1513,13 @@ function BoardPage() {
   const [loadingSettings, setLoadingSettings] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
   const [addingDraftSkill, setAddingDraftSkill] = useState(false);
+  const [updatingSkillEnabled, setUpdatingSkillEnabled] = useState(false);
   const [draftSkillMessage, setDraftSkillMessage] = useState<string | null>(
     null,
   );
+  const [skillEnablementMessage, setSkillEnablementMessage] = useState<
+    string | null
+  >(null);
   const [runningSync, setRunningSync] = useState(false);
   const [syncRefreshToken, setSyncRefreshToken] = useState(0);
   const [limitOnboardingSyncToLatest100, setLimitOnboardingSyncToLatest100] =
@@ -1789,6 +1874,7 @@ function BoardPage() {
 
   async function openSkill(skillId: string, scopedProjectId?: string | null) {
     setDraftSkillMessage(null);
+    setSkillEnablementMessage(null);
     const projectQuery = scopedProjectId
       ? `?projectId=${encodeURIComponent(scopedProjectId)}`
       : '';
@@ -1806,11 +1892,13 @@ function BoardPage() {
 
   function openSkillSuggestion(suggestion: SkillSuggestion) {
     setDraftSkillMessage(null);
+    setSkillEnablementMessage(null);
     const relativePath = `.agents/skills/${suggestion.name}/SKILL.md`;
     setSelectedSkill({
       id: suggestion.id,
       name: suggestion.name,
       description: suggestion.description,
+      enabled: true,
       source: 'project',
       sourceLabel: 'Draft suggestion',
       sourceName: selectedProject?.id ?? null,
@@ -1898,6 +1986,80 @@ function BoardPage() {
       );
     } finally {
       setAddingDraftSkill(false);
+    }
+  }
+
+  function replaceSkillSummary(
+    response: SkillListResponse | null,
+    updatedSkill: SkillSummary,
+  ): SkillListResponse | null {
+    if (!response) {
+      return response;
+    }
+
+    let replaced = false;
+    const skills = response.skills.map((skill) => {
+      if (skill.id !== updatedSkill.id) {
+        return skill;
+      }
+
+      replaced = true;
+      return updatedSkill;
+    });
+
+    return replaced
+      ? {
+          ...response,
+          skills,
+        }
+      : response;
+  }
+
+  async function setSkillEnabled(skill: SkillDetail, enabled: boolean) {
+    setUpdatingSkillEnabled(true);
+    setSkillEnablementMessage(null);
+    setDraftSkillMessage(null);
+
+    const projectQuery = skill.projectId
+      ? `?projectId=${encodeURIComponent(skill.projectId)}`
+      : '';
+    const payload: UpdateSkillEnabledPayload = {
+      enabled,
+    };
+
+    try {
+      const response = await patchJson<UpdateSkillEnabledResponse>(
+        `/skills/${encodeURIComponent(skill.id)}/enabled${projectQuery}`,
+        payload,
+      );
+      if (!response.ok || !response.skill) {
+        throw new Error(response.message || 'Failed to update skill.');
+      }
+
+      const updatedSkill = response.skill;
+      setSelectedSkill((current) =>
+        current?.id === updatedSkill.id
+          ? {
+              ...updatedSkill,
+              content: current.content,
+            }
+          : current,
+      );
+      setGlobalSkillsResponse((current) =>
+        replaceSkillSummary(current, updatedSkill),
+      );
+      setProjectSkillsResponse((current) =>
+        replaceSkillSummary(current, updatedSkill),
+      );
+      setSkillEnablementMessage(response.message);
+    } catch (toggleError) {
+      setSkillEnablementMessage(
+        toggleError instanceof Error
+          ? toggleError.message
+          : 'Failed to update skill.',
+      );
+    } finally {
+      setUpdatingSkillEnabled(false);
     }
   }
 
@@ -2620,11 +2782,15 @@ function BoardPage() {
         addingDraftSkill={addingDraftSkill}
         draftSkillMessage={draftSkillMessage}
         onAddDraftSkill={addDraftSkill}
+        onUpdateSkillEnabled={setSkillEnabled}
         skill={selectedSkill}
+        skillEnablementMessage={skillEnablementMessage}
         onClose={() => {
           setSelectedSkill(null);
           setDraftSkillMessage(null);
+          setSkillEnablementMessage(null);
         }}
+        updatingSkillEnabled={updatingSkillEnabled}
       />
       <SettingsModal
         error={settingsError}

@@ -73,6 +73,7 @@ export interface SkillSummary {
   id: string;
   name: string;
   description: string;
+  enabled: boolean;
   source: SkillSource;
   sourceLabel: string;
   sourceName: string | null;
@@ -332,6 +333,17 @@ export interface InstallSkillResponse {
   ok: boolean;
   skill: SkillSummary | null;
   message: string;
+}
+
+export interface UpdateSkillEnabledPayload {
+  enabled: boolean;
+}
+
+export interface UpdateSkillEnabledResponse {
+  ok: boolean;
+  skill: SkillSummary | null;
+  message: string;
+  restartRequired: boolean;
 }
 
 export interface SavedViewListResponse {
