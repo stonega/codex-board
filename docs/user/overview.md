@@ -6,7 +6,7 @@ The current workflow is:
 
 1. Configure the parser provider on first open; Codex CLI is selected by default
 2. Choose the parse output language on a dedicated second setup step
-3. Run the first sync from the onboarding sync screen
+3. Run the first sync from the onboarding sync screen, or skip to home and sync later
 4. Scan rollout files under `~/.codex/sessions`
 5. Keep only threads with Git workspace evidence
 6. Truncate thread content to a cheap parse payload

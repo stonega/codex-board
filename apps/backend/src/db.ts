@@ -43,6 +43,10 @@ export interface UsageEventRecord {
   isArchived: boolean;
 }
 
+export interface OnboardingPreferences {
+  skipSync: boolean;
+}
+
 export interface SyncFileState {
   path: string;
   mtimeMs: number;
@@ -464,6 +468,44 @@ export class BoardsDatabase {
       .run(
         'parser_settings',
         JSON.stringify(settings),
+        new Date().toISOString(),
+      );
+  }
+
+  readOnboardingPreferences(): OnboardingPreferences {
+    const row = this.db
+      .query(
+        'SELECT value_json as valueJson FROM app_settings WHERE key = ? LIMIT 1',
+      )
+      .get('onboarding_preferences') as { valueJson: string } | null;
+
+    if (!row) {
+      return {
+        skipSync: false,
+      };
+    }
+
+    const preferences = parseJson<{ skipSync?: boolean }>(row.valueJson);
+
+    return {
+      skipSync: Boolean(preferences.skipSync),
+    };
+  }
+
+  saveOnboardingPreferences(preferences: OnboardingPreferences): void {
+    this.db
+      .query(
+        `
+        INSERT INTO app_settings (key, value_json, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(key) DO UPDATE SET
+          value_json = excluded.value_json,
+          updated_at = excluded.updated_at
+      `,
+      )
+      .run(
+        'onboarding_preferences',
+        JSON.stringify(preferences),
         new Date().toISOString(),
       );
   }

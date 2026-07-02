@@ -41,6 +41,7 @@ export interface ThreadImage {
   mimeType: string | null;
   filename: string | null;
   originalUrl: string | null;
+  previewUrl?: string | null;
   localPath: string | null;
   width: number | null;
   height: number | null;
@@ -413,6 +414,7 @@ export interface OnboardingState {
   step: 'provider' | 'sync' | 'complete';
   providerReady: boolean;
   hasCompletedSync: boolean;
+  hasSkippedSync: boolean;
 }
 
 export interface SettingsResponse {
@@ -446,6 +448,9 @@ export interface UpdateSettingsPayload {
     model?: string | null;
     apiKey?: string | null;
     outputLanguage?: string | null;
+  };
+  onboarding?: {
+    skipSync?: boolean;
   };
 }
 

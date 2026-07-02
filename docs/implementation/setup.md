@@ -97,13 +97,14 @@ You can also inspect and update the runtime parser settings from the web app's S
 - The backend scans `~/.codex/sessions` when sync is requested or scheduled
 - Only Git-backed threads are imported
 - Parsed issues are stored in SQLite under `.tmp/codex-boards.sqlite` by default
-- First-run onboarding requires parser provider setup, shows a dedicated parse output language step, runs the first sync, then enters the board
+- Issue detail responses include image preview URLs when a thread image has a retrievable URL or local file path. Local file previews are served from the backend's `/issue-images/:issueId/:imageId` route and are not exposed through the JSON API CORS middleware.
+- First-run onboarding requires parser provider setup, shows a dedicated parse output language step, and either runs the first sync or persists a skip-to-home choice before entering the board
 - Manual sync runs incrementally: new, changed, removed, or parser-fingerprint-changed rollout files are processed; unchanged files are skipped
 - The `POST /api/sync` `maxThreads` option is only honored before the first completed sync; later manual syncs scan all rollout files
 - After the first completed sync, the backend schedules background sync every minute by default and only queues newly added or file-updated rollout threads; set `CODEX_BOARDS_SYNC_INTERVAL_MS=0` to disable it
 - Live sync status is available as JSON or WebSocket at `GET /api/sync/status`; before the first sync, `progress.totalFiles` reports the discovered local rollout thread count
 - If AI parsing is unavailable, fallback issues are still persisted and marked for review
-- Parser settings can be changed at runtime through `GET /api/settings` and `POST /api/settings`, and persisted in SQLite
+- Parser settings and the onboarding sync skip preference can be changed at runtime through `GET /api/settings` and `POST /api/settings`, and persisted in SQLite
 - Sync runs persist parser base URL, configured model, resolved response model(s), request counts, token totals, and parse logs in SQLite
 - Skills are exposed through `GET /api/skills` and `GET /api/skills/:id`; global discovery reads `${CODEX_HOME:-~/.codex}/skills`, `${AGENTS_HOME:-~/.agents}/skills`, and enabled plugin skill roots from `${CODEX_HOME:-~/.codex}/config.toml`
 - Skill enablement is changed through `PATCH /api/skills/:id/enabled`, which writes official Codex `[[skills.config]]` entries in `${CODEX_HOME:-~/.codex}/config.toml`; disabled skills stay visible in the dashboard so they can be re-enabled, and Codex must be restarted for invocation behavior to change

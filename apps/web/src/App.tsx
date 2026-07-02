@@ -7,6 +7,7 @@ import {
   ExternalLink,
   Filter,
   GitCommit,
+  Home,
   Image as ImageIcon,
   Layout,
   List,
@@ -400,8 +401,8 @@ function DetailSheet({
               {images.length > 0 ? (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {images.map((image) => {
-                    const canPreview =
-                      image.sourceType === 'url' && Boolean(image.originalUrl);
+                    const previewUrl = image.previewUrl ?? null;
+                    const canPreview = Boolean(previewUrl);
                     const label =
                       image.caption ||
                       image.filename ||
@@ -417,17 +418,13 @@ function DetailSheet({
                         className="rounded border border-notion-border overflow-hidden"
                         key={image.id}
                       >
-                        {canPreview && image.originalUrl ? (
-                          <a
-                            href={image.originalUrl}
-                            rel="noreferrer"
-                            target="_blank"
-                          >
+                        {canPreview && previewUrl ? (
+                          <a href={previewUrl} rel="noreferrer" target="_blank">
                             <img
                               alt={label}
                               className="aspect-[4/3] w-full object-cover bg-[#f7f7f5]"
                               loading="lazy"
-                              src={image.originalUrl}
+                              src={previewUrl}
                             />
                           </a>
                         ) : (
@@ -983,13 +980,32 @@ function OutputLanguageControl({
 function SyncStatusPill({
   status,
   fallbackSync,
+  onRunSync,
+  syncActive,
 }: {
   status: SyncStatus | null;
   fallbackSync: SyncDiagnostics | null;
+  onRunSync: () => Promise<void>;
+  syncActive: boolean;
 }) {
   const syncing = status?.state === 'syncing';
   const lastSync = status?.lastSync ?? fallbackSync;
   const error = status?.latestError;
+
+  if (!syncing && !error && !lastSync) {
+    return (
+      <Button
+        className="px-3 disabled:opacity-60"
+        disabled={syncActive}
+        onClick={() => void onRunSync()}
+        type="button"
+      >
+        <RefreshCw size={13} />
+        {syncActive ? 'Syncing...' : 'Start Sync'}
+      </Button>
+    );
+  }
+
   const label = syncing
     ? status.progress.currentFilePath
       ? `Syncing ${status.progress.scannedFiles}/${status.progress.totalFiles}`
@@ -1029,6 +1045,7 @@ function OnboardingScreen({
   onApplyPreset,
   onSaveLanguage,
   onSaveProvider,
+  onSkipToHome,
   onRunSync,
 }: {
   form: ParserSettingsForm;
@@ -1042,6 +1059,7 @@ function OnboardingScreen({
   onApplyPreset: (preset: keyof typeof PARSER_PRESETS) => void;
   onSaveLanguage: () => Promise<boolean>;
   onSaveProvider: () => Promise<boolean>;
+  onSkipToHome: () => Promise<void>;
   onRunSync: () => Promise<void>;
 }) {
   const progress = syncStatus?.progress;
@@ -1296,9 +1314,18 @@ function OnboardingScreen({
                   </p>
                 ) : null}
 
-                <div className="flex justify-end border-t border-notion-border pt-4">
+                <div className="flex flex-col gap-2 border-t border-notion-border pt-4 sm:flex-row sm:items-center sm:justify-between">
                   <Button
-                    disabled={syncActive}
+                    disabled={saving}
+                    onClick={() => void onSkipToHome()}
+                    variant="outline"
+                    className="px-3"
+                  >
+                    <Home size={14} />
+                    {saving ? 'Skipping...' : 'Skip to home'}
+                  </Button>
+                  <Button
+                    disabled={syncActive || saving}
                     onClick={() => void onRunSync()}
                     className="bg-notion-blue px-4 text-white hover:bg-blue-600"
                   >
@@ -2321,6 +2348,28 @@ function BoardPage() {
     }
   }
 
+  async function skipOnboardingSync(): Promise<void> {
+    setSavingSettings(true);
+    setSettingsError(null);
+    setError(null);
+
+    try {
+      const settings = await postJson<SettingsResponse>('/settings', {
+        onboarding: {
+          skipSync: true,
+        },
+      });
+      setSettingsResponse(settings);
+      setSettingsForm(createParserSettingsForm(settings.parser));
+    } catch (skipError) {
+      setSettingsError(
+        skipError instanceof Error ? skipError.message : 'Unknown error',
+      );
+    } finally {
+      setSavingSettings(false);
+    }
+  }
+
   const parserReady = isParserSettingsReady(settingsResponse?.parser);
   const syncActive = runningSync || syncStatus?.state === 'syncing';
   const onboardingDisplayStep = getOnboardingDisplayStep(
@@ -2403,10 +2452,11 @@ function BoardPage() {
           return saved;
         }}
         onSaveProvider={() => saveSettings({ closeSettings: false })}
+        onSkipToHome={skipOnboardingSync}
         saving={savingSettings}
         step={onboardingDisplayStep}
         syncActive={syncActive}
-        syncError={error ?? syncStatus?.latestError ?? null}
+        syncError={settingsError ?? error ?? syncStatus?.latestError ?? null}
         syncStatus={syncStatus}
       />
     );
@@ -2572,7 +2622,9 @@ function BoardPage() {
               fallbackSync={
                 settingsResponse?.sync ?? projectsResponse?.sync ?? null
               }
+              onRunSync={() => runSync('manual')}
               status={syncStatus}
+              syncActive={syncActive}
             />
           </header>
 

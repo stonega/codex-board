@@ -1,3 +1,7 @@
+import { statSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { basename, isAbsolute, join, resolve } from 'node:path';
+
 import { Hono } from 'hono';
 import type { Context, Next } from 'hono';
 import { upgradeWebSocket, websocket } from 'hono/bun';
@@ -7,12 +11,14 @@ import {
   type ExportMulticaPayload,
   type InstallSkillPayload,
   type IssueFilters,
-  type ParserProvider,
+  type ParsedIssue,
   type SavedView,
   type SettingsResponse,
   type SyncRequestPayload,
   type SyncRunListResponse,
   type SyncStatusResponse,
+  type ThreadImage,
+  type UpdateSettingsPayload,
   type UpdateSkillEnabledPayload,
   slugify,
 } from '../../../packages/domain/src/index';
@@ -45,6 +51,7 @@ function isWebSocketRequest(context: Context): boolean {
 function createOnboardingState(response: {
   parser: ReturnType<typeof readParserSettings>;
   sync: SettingsResponse['sync'];
+  hasSkippedSync: boolean;
 }): SettingsResponse['onboarding'] {
   const providerReady =
     response.parser.provider === 'codex-cli'
@@ -55,9 +62,10 @@ function createOnboardingState(response: {
             response.parser.apiKeyConfigured,
         );
   const hasCompletedSync = Boolean(response.sync);
+  const hasSkippedSync = response.hasSkippedSync;
   const step = !providerReady
     ? 'provider'
-    : hasCompletedSync
+    : hasCompletedSync || hasSkippedSync
       ? 'complete'
       : 'sync';
 
@@ -66,6 +74,7 @@ function createOnboardingState(response: {
     step,
     providerReady,
     hasCompletedSync,
+    hasSkippedSync,
   };
 }
 
@@ -75,14 +84,78 @@ function createSettingsResponse(
 ): SettingsResponse {
   const parser = readParserSettings(config);
   const sync = database.getLatestSync();
+  const onboardingPreferences = database.readOnboardingPreferences();
 
   return {
     generatedAt: new Date().toISOString(),
     parser,
-    onboarding: createOnboardingState({ parser, sync }),
+    onboarding: createOnboardingState({
+      parser,
+      sync,
+      hasSkippedSync: onboardingPreferences.skipSync,
+    }),
     sync,
     syncHistory: database.listSyncRuns(),
   };
+}
+
+function createImagePreviewRoute(image: ThreadImage): string {
+  return `/issue-images/${encodeURIComponent(image.issueId)}/${encodeURIComponent(image.id)}`;
+}
+
+function getImagePreviewUrl(
+  context: Context,
+  image: ThreadImage,
+): string | null {
+  if (image.sourceType === 'url' && image.originalUrl) {
+    return image.originalUrl;
+  }
+
+  if (image.sourceType === 'file_path' && image.localPath) {
+    return new URL(createImagePreviewRoute(image), context.req.url).toString();
+  }
+
+  return null;
+}
+
+function withImagePreviewUrls(
+  context: Context,
+  issue: ParsedIssue | null,
+): ParsedIssue | null {
+  if (!issue?.images) {
+    return issue;
+  }
+
+  return {
+    ...issue,
+    images: issue.images.map((image) => ({
+      ...image,
+      previewUrl: getImagePreviewUrl(context, image),
+    })),
+  };
+}
+
+function resolveImagePath(localPath: string, workspacePath: string): string {
+  let normalized = localPath.trim();
+  if (normalized.startsWith('~/')) {
+    normalized = join(homedir(), normalized.slice(2));
+  }
+
+  return isAbsolute(normalized)
+    ? resolve(normalized)
+    : resolve(workspacePath, normalized);
+}
+
+function getInlineFilename(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+
+  return (
+    basename(value)
+      .replace(/["\r\n]/g, '')
+      .trim() || null
+  );
 }
 
 async function readOptionalSyncPayload(context: Context) {
@@ -292,22 +365,25 @@ export function createAppServer(config: AppConfig = getConfig()) {
   });
 
   app.post('/api/settings', async (context) => {
-    const body = (await context.req.json()) as {
-      parser?: {
-        provider?: ParserProvider | null;
-        baseUrl?: string | null;
-        model?: string | null;
-        apiKey?: string | null;
-        outputLanguage?: string | null;
-      };
-    };
+    const body = (await context.req.json()) as UpdateSettingsPayload;
 
-    if (!body?.parser) {
-      return context.json({ message: 'parser settings are required' }, 400);
+    if (!body?.parser && !body?.onboarding) {
+      return context.json(
+        { message: 'parser or onboarding settings are required' },
+        400,
+      );
     }
 
-    updateParserSettings(config, body.parser);
-    database.saveParserSettings(readPersistableParserSettings(config));
+    if (body.parser) {
+      updateParserSettings(config, body.parser);
+      database.saveParserSettings(readPersistableParserSettings(config));
+    }
+
+    if (body.onboarding && Object.hasOwn(body.onboarding, 'skipSync')) {
+      database.saveOnboardingPreferences({
+        skipSync: Boolean(body.onboarding.skipSync),
+      });
+    }
 
     return context.json(createSettingsResponse(config, database));
   });
@@ -334,7 +410,57 @@ export function createAppServer(config: AppConfig = getConfig()) {
       return context.json(response, 404);
     }
 
-    return context.json(response);
+    return context.json({
+      ...response,
+      issue: withImagePreviewUrls(context, response.issue),
+    });
+  });
+
+  app.get('/issue-images/:issueId/:imageId', (context) => {
+    const issueId = decodeURIComponent(context.req.param('issueId'));
+    const imageId = decodeURIComponent(context.req.param('imageId'));
+    const response = database.getIssue(issueId);
+    const issue = response.issue;
+    const image = issue?.images?.find((entry) => entry.id === imageId);
+
+    if (!issue || !image) {
+      return context.text('Image not found', 404);
+    }
+
+    if (
+      image.sourceType !== 'file_path' ||
+      !image.localPath ||
+      !image.mimeType?.startsWith('image/')
+    ) {
+      return context.text('Image preview is not available', 404);
+    }
+
+    const filePath = resolveImagePath(image.localPath, issue.git.workspacePath);
+    let size = 0;
+    try {
+      const stat = statSync(filePath);
+      if (!stat.isFile()) {
+        return context.text('Image not found', 404);
+      }
+      size = stat.size;
+    } catch {
+      return context.text('Image not found', 404);
+    }
+
+    const headers = new Headers({
+      'cache-control': 'private, max-age=300',
+      'content-security-policy':
+        "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; sandbox",
+      'content-length': String(size),
+      'content-type': image.mimeType,
+      'x-content-type-options': 'nosniff',
+    });
+    const filename = getInlineFilename(image.filename);
+    if (filename) {
+      headers.set('content-disposition', `inline; filename="${filename}"`);
+    }
+
+    return new Response(Bun.file(filePath), { headers });
   });
 
   app.post('/api/issues/:id/review', async (context) => {
@@ -343,7 +469,11 @@ export function createAppServer(config: AppConfig = getConfig()) {
       context.req.param('id'),
       Boolean(body?.needsReview),
     );
-    return context.json(database.getIssue(context.req.param('id')));
+    const response = database.getIssue(context.req.param('id'));
+    return context.json({
+      ...response,
+      issue: withImagePreviewUrls(context, response.issue),
+    });
   });
 
   app.post('/api/sync', async (context) => {

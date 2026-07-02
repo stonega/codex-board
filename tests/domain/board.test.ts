@@ -22,6 +22,10 @@ import {
   buildParsePayload,
   parseRolloutFile,
 } from '../../apps/backend/src/rollout-parser';
+import type {
+  IssueDetailResponse,
+  IssueListResponse,
+} from '../../packages/domain/src';
 import {
   inferProjectId,
   inferProjectName,
@@ -445,6 +449,102 @@ describe('parser settings', () => {
       });
     } finally {
       server.close();
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test('skips first sync onboarding through settings api', async () => {
+    const root = `/tmp/codex-boards-onboarding-skip-${Date.now()}`;
+    const databasePath = join(root, 'boards.sqlite');
+    const sessionsRoot = join(root, 'sessions');
+    mkdirSync(root, { recursive: true });
+
+    const firstServer = createAppServer({
+      port: 7788,
+      sessionsRoot,
+      databasePath,
+      openAiBaseUrl: null,
+      openAiApiKey: null,
+      openAiModel: null,
+      syncIntervalMs: 0,
+    });
+
+    try {
+      const providerResponse = await firstServer.app.request('/api/settings', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          parser: {
+            provider: 'codex-cli',
+            model: ' gpt-5.4-mini ',
+          },
+        }),
+      });
+
+      expect(providerResponse.status).toBe(200);
+      expect(await providerResponse.json()).toMatchObject({
+        onboarding: {
+          required: true,
+          step: 'sync',
+          providerReady: true,
+          hasCompletedSync: false,
+          hasSkippedSync: false,
+        },
+      });
+
+      const skipResponse = await firstServer.app.request('/api/settings', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          onboarding: {
+            skipSync: true,
+          },
+        }),
+      });
+
+      expect(skipResponse.status).toBe(200);
+      expect(await skipResponse.json()).toMatchObject({
+        onboarding: {
+          required: false,
+          step: 'complete',
+          providerReady: true,
+          hasCompletedSync: false,
+          hasSkippedSync: true,
+        },
+        sync: null,
+      });
+    } finally {
+      firstServer.close();
+    }
+
+    const restartedServer = createAppServer({
+      port: 7788,
+      sessionsRoot,
+      databasePath,
+      openAiBaseUrl: null,
+      openAiApiKey: null,
+      openAiModel: null,
+      syncIntervalMs: 0,
+    });
+
+    try {
+      const response = await restartedServer.app.request('/api/settings');
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        onboarding: {
+          required: false,
+          step: 'complete',
+          hasCompletedSync: false,
+          hasSkippedSync: true,
+        },
+      });
+    } finally {
+      restartedServer.close();
       rmSync(root, { force: true, recursive: true });
     }
   });
@@ -1605,6 +1705,95 @@ JSON
           skippedThreads: 25,
         },
       });
+    } finally {
+      server.close();
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test('serves local file image previews from issue details', async () => {
+    const root = `/tmp/codex-boards-image-preview-${Date.now()}`;
+    const sessionsRoot = join(root, 'sessions');
+    const workspacePath = join(root, 'image-workspace');
+    const imagePath = join(workspacePath, 'screens', 'sheet.png');
+    const pngBytes = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
+      'base64',
+    );
+
+    mkdirSync(join(sessionsRoot, '2026', '04', '06'), { recursive: true });
+    mkdirSync(join(workspacePath, '.git'), { recursive: true });
+    mkdirSync(join(workspacePath, 'screens'), { recursive: true });
+    writeFileSync(imagePath, pngBytes);
+    writeFileSync(
+      join(sessionsRoot, '2026', '04', '06', 'rollout-image-preview.jsonl'),
+      [
+        JSON.stringify({
+          timestamp: '2026-04-05T05:00:00.000Z',
+          type: 'session_meta',
+          payload: {
+            id: 'image-preview-thread',
+            timestamp: '2026-04-05T04:59:00.000Z',
+            cwd: workspacePath,
+          },
+        }),
+        JSON.stringify({
+          timestamp: '2026-04-05T05:00:01.000Z',
+          type: 'event_msg',
+          payload: {
+            type: 'user_message',
+            message:
+              'Fix the issue detail sheet. ![Sheet screenshot](./screens/sheet.png)',
+          },
+        }),
+      ].join('\n'),
+    );
+
+    const server = createAppServer({
+      port: 7788,
+      sessionsRoot,
+      databasePath: join(root, 'boards.sqlite'),
+      openAiBaseUrl: null,
+      openAiApiKey: null,
+      openAiModel: null,
+    });
+
+    try {
+      const syncResponse = await server.app.request('/api/sync', {
+        method: 'POST',
+      });
+      expect(syncResponse.status).toBe(200);
+
+      const issuesResponse = await server.app.request(
+        '/api/issues?projectId=image-workspace',
+      );
+      expect(issuesResponse.status).toBe(200);
+      const issuesPayload = (await issuesResponse.json()) as IssueListResponse;
+      const issue = issuesPayload.issues[0];
+      expect(issue?.stats.imageCount).toBe(1);
+
+      const detailResponse = await server.app.request(
+        `/api/issues/${issue?.id}`,
+      );
+      expect(detailResponse.status).toBe(200);
+      const detailPayload =
+        (await detailResponse.json()) as IssueDetailResponse;
+      const image = detailPayload.issue?.images?.[0];
+      expect(image?.sourceType).toBe('file_path');
+      expect(image?.filename).toBe('sheet.png');
+      expect(image?.previewUrl).toContain('/issue-images/');
+
+      if (!image?.previewUrl) {
+        throw new Error('Expected local image preview URL');
+      }
+
+      const previewUrl = new URL(image.previewUrl);
+      const previewResponse = await server.app.request(previewUrl.pathname);
+      expect(previewResponse.status).toBe(200);
+      expect(previewResponse.headers.get('content-type')).toBe('image/png');
+      expect(
+        Buffer.from(await previewResponse.arrayBuffer()).equals(pngBytes),
+      ).toBe(true);
     } finally {
       server.close();
       rmSync(root, { force: true, recursive: true });
