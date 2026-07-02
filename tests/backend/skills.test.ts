@@ -28,7 +28,6 @@ function createProject(workspacePath: string): ProjectSummary {
     repository: 'codex-boards',
     workspacePath,
     issueCount: 0,
-    subIssueCount: 0,
     needsReviewCount: 0,
     lastUpdatedAt: '2026-04-09T00:00:00.000Z',
   };
@@ -174,7 +173,6 @@ describe('skill api', () => {
         repository: 'codex-boards',
         workspacePath: projectWorkspace,
         issueCount: 0,
-        subIssueCount: 0,
         needsReviewCount: 0,
         lastUpdatedAt: '2026-04-09T00:00:00.000Z',
       });
@@ -198,6 +196,7 @@ describe('skill api', () => {
       const codexSkill = globalPayload.skills.find(
         (skill: { name: string }) => skill.name === 'codex-helper',
       );
+      expect(codexSkill.enabled).toBe(true);
       const globalDetailResponse = await server.app.request(
         `/api/skills/${codexSkill.id}`,
       );
@@ -205,9 +204,67 @@ describe('skill api', () => {
       expect(await globalDetailResponse.json()).toMatchObject({
         skill: {
           name: 'codex-helper',
+          enabled: true,
           content: expect.stringContaining('# Codex Helper'),
         },
       });
+
+      const disableResponse = await server.app.request(
+        `/api/skills/${codexSkill.id}/enabled`,
+        {
+          method: 'PATCH',
+          headers: {
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({ enabled: false }),
+        },
+      );
+      expect(disableResponse.status).toBe(200);
+      expect(await disableResponse.json()).toMatchObject({
+        ok: true,
+        restartRequired: true,
+        skill: {
+          id: codexSkill.id,
+          enabled: false,
+        },
+      });
+      expect(readFileSync(join(codexHome, 'config.toml'), 'utf8')).toContain(
+        'enabled = false',
+      );
+
+      const disabledGlobalResponse = await server.app.request('/api/skills');
+      const disabledGlobalPayload = await disabledGlobalResponse.json();
+      expect(
+        disabledGlobalPayload.skills.find(
+          (skill: { name: string }) => skill.name === 'codex-helper',
+        )?.enabled,
+      ).toBe(false);
+
+      const enableResponse = await server.app.request(
+        `/api/skills/${codexSkill.id}/enabled`,
+        {
+          method: 'PATCH',
+          headers: {
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({ enabled: true }),
+        },
+      );
+      expect(enableResponse.status).toBe(200);
+      expect(await enableResponse.json()).toMatchObject({
+        ok: true,
+        restartRequired: true,
+        skill: {
+          id: codexSkill.id,
+          enabled: true,
+        },
+      });
+      const enabledConfig = readFileSync(
+        join(codexHome, 'config.toml'),
+        'utf8',
+      );
+      expect(enabledConfig).toContain('[plugins."github@openai-curated"]');
+      expect(enabledConfig).not.toContain('codex-helper/SKILL.md');
 
       const projectResponse = await server.app.request(
         '/api/skills?projectId=codex-boards',
@@ -225,6 +282,7 @@ describe('skill api', () => {
       ).toEqual(['project-helper']);
 
       const projectSkill = projectPayload.skills[0];
+      expect(projectSkill.enabled).toBe(true);
       const projectDetailResponse = await server.app.request(
         `/api/skills/${projectSkill.id}?projectId=codex-boards`,
       );
@@ -232,7 +290,28 @@ describe('skill api', () => {
       expect(await projectDetailResponse.json()).toMatchObject({
         skill: {
           name: 'project-helper',
+          enabled: true,
           content: expect.stringContaining('# Project Helper'),
+        },
+      });
+
+      const disableProjectResponse = await server.app.request(
+        `/api/skills/${projectSkill.id}/enabled?projectId=codex-boards`,
+        {
+          method: 'PATCH',
+          headers: {
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({ enabled: false }),
+        },
+      );
+      expect(disableProjectResponse.status).toBe(200);
+      expect(await disableProjectResponse.json()).toMatchObject({
+        ok: true,
+        restartRequired: true,
+        skill: {
+          id: projectSkill.id,
+          enabled: false,
         },
       });
 

@@ -1,5 +1,3 @@
-import { randomUUID } from 'node:crypto';
-
 import { Hono } from 'hono';
 import type { Context, Next } from 'hono';
 import { upgradeWebSocket, websocket } from 'hono/bun';
@@ -9,13 +7,13 @@ import {
   type ExportMulticaPayload,
   type InstallSkillPayload,
   type IssueFilters,
-  type ParsedIssue,
   type ParserProvider,
   type SavedView,
   type SettingsResponse,
   type SyncRequestPayload,
   type SyncRunListResponse,
   type SyncStatusResponse,
+  type UpdateSkillEnabledPayload,
   slugify,
 } from '../../../packages/domain/src/index';
 
@@ -34,6 +32,7 @@ import {
   installSuggestedSkill,
   listSkillSuggestions,
   listSkills,
+  updateSkillEnabled,
 } from './skills';
 import { SyncCoordinator } from './sync-coordinator';
 import { SyncService } from './sync-service';
@@ -126,8 +125,6 @@ export function createAppServer(config: AppConfig = getConfig()) {
     query: Record<string, string | undefined>,
   ): IssueFilters {
     return {
-      status: query.status as IssueFilters['status'],
-      priority: query.priority as IssueFilters['priority'],
       parseMode: query.parseMode as IssueFilters['parseMode'],
       needsReview:
         query.needsReview === undefined
@@ -135,6 +132,7 @@ export function createAppServer(config: AppConfig = getConfig()) {
           : query.needsReview === 'true',
       hasCommits: query.hasCommits === 'true',
       hasTags: query.hasTags === 'true',
+      hasImages: query.hasImages === 'true',
       tag: query.tag ?? null,
       query: query.query ?? null,
     };
@@ -211,6 +209,40 @@ export function createAppServer(config: AppConfig = getConfig()) {
     }
 
     return context.json(result.response, 400);
+  });
+
+  app.patch('/api/skills/:id/enabled', async (context) => {
+    let payload: UpdateSkillEnabledPayload;
+    try {
+      payload = (await context.req.json()) as UpdateSkillEnabledPayload;
+    } catch {
+      return context.json(
+        {
+          ok: false,
+          skill: null,
+          message: 'Invalid JSON payload.',
+          restartRequired: false,
+        },
+        400,
+      );
+    }
+
+    const result = updateSkillEnabled({
+      config,
+      database,
+      projectId: context.req.query().projectId ?? null,
+      skillId: context.req.param('id'),
+      payload,
+    });
+
+    if (result.status === 404) {
+      return context.json(result.response, 404);
+    }
+    if (result.status === 400) {
+      return context.json(result.response, 400);
+    }
+
+    return context.json(result.response);
   });
 
   app.get('/api/skills/:id', (context) => {
@@ -311,47 +343,6 @@ export function createAppServer(config: AppConfig = getConfig()) {
       Boolean(body?.needsReview),
     );
     return context.json(database.getIssue(context.req.param('id')));
-  });
-
-  app.post('/api/issues/:id/merge', async (context) => {
-    const body = await context.req.json();
-    if (!body?.targetIssueId) {
-      return context.json({ message: 'targetIssueId is required' }, 400);
-    }
-
-    database.mergeIssue(context.req.param('id'), String(body.targetIssueId));
-    return context.json(database.getIssue(String(body.targetIssueId)));
-  });
-
-  app.post('/api/issues/:id/split', async (context) => {
-    const parent = database.getIssue(context.req.param('id')).issue;
-    if (!parent) {
-      return context.json({ message: 'Issue not found' }, 404);
-    }
-
-    const body = await context.req.json();
-    const children = Array.isArray(body?.children) ? body.children : [];
-    const created: ParsedIssue[] = children.map(
-      (child: Record<string, unknown>, index: number) => ({
-        ...parent,
-        id: `${parent.id}:manual-${index + 1}-${randomUUID().slice(0, 8)}`,
-        parentIssueId: parent.id,
-        kind: 'sub_issue',
-        title: String(child.title ?? `Manual sub issue ${index + 1}`),
-        summary: String(child.summary ?? child.title ?? ''),
-        status: (child.status as ParsedIssue['status']) ?? 'todo',
-        priority: (child.priority as ParsedIssue['priority']) ?? 'medium',
-        tags: Array.isArray(child.tags) ? child.tags.map(String) : parent.tags,
-        parseMode: 'fallback',
-        confidence: 0.51,
-        needsReview: false,
-        subIssueCount: 0,
-        children: [],
-      }),
-    );
-
-    database.splitIssue(parent.id, created);
-    return context.json(database.getIssue(parent.id));
   });
 
   app.post('/api/sync', async (context) => {

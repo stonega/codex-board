@@ -63,7 +63,7 @@ Export issues to Multica:
 bun run --filter @codex-boards/backend start -- issues export multica --project codex-boards
 ```
 
-The export command runs a sync first by default, then creates one Multica issue per parent issue and, unless `--no-children` is set, creates sub-issues under the exported Multica parent. Use `--dry-run` to inspect the generated `multica issue create` commands and `--skip-sync` when you want to export the current SQLite snapshot as-is.
+The export command runs a sync first by default, then creates one Multica issue per imported thread issue. Use `--dry-run` to inspect the generated `multica issue create` commands and `--skip-sync` when you want to export the current SQLite snapshot as-is. The legacy `--no-children` flag is accepted for compatibility, but imported thread issues no longer have children.
 
 Optional parser configuration:
 
@@ -103,11 +103,12 @@ You can also inspect and update the runtime parser settings from the web app's S
 - If AI parsing is unavailable, fallback issues are still persisted and marked for review
 - Parser settings can be changed at runtime through `GET /api/settings` and `POST /api/settings`, and persisted in SQLite
 - Sync runs persist parser base URL, configured model, resolved response model(s), request counts, token totals, and parse logs in SQLite
-- Skills are exposed read-only through `GET /api/skills` and `GET /api/skills/:id`; global discovery reads `${CODEX_HOME:-~/.codex}/skills`, `${AGENTS_HOME:-~/.agents}/skills`, and enabled plugin skill roots from `${CODEX_HOME:-~/.codex}/config.toml`
+- Skills are exposed through `GET /api/skills` and `GET /api/skills/:id`; global discovery reads `${CODEX_HOME:-~/.codex}/skills`, `${AGENTS_HOME:-~/.agents}/skills`, and enabled plugin skill roots from `${CODEX_HOME:-~/.codex}/config.toml`
+- Skill enablement is changed through `PATCH /api/skills/:id/enabled`, which writes official Codex `[[skills.config]]` entries in `${CODEX_HOME:-~/.codex}/config.toml`; disabled skills stay visible in the dashboard so they can be re-enabled, and Codex must be restarted for invocation behavior to change
 - Project skill discovery reads `.codex/skills` and `.agents/skills` under the selected project's `workspacePath`
 - Project skill suggestions are exposed through `GET /api/skills/suggestions?projectId=...`; the backend groups repeated sanitized user prompts and assistant outcomes from imported workspace threads into draft `SKILL.md` ideas. Installed global, plugin, agent, and project-local skills are not ranked against issues.
 - Draft skill suggestions can be installed through `POST /api/skills/install`; workspace installs write to `<project workspace>/.agents/skills/<name>/SKILL.md`, and global installs write to `${AGENTS_HOME:-~/.agents}/skills/<name>/SKILL.md`. Existing skill files are not overwritten.
-- Usage aggregation is exposed through `GET /api/usage` and `POST /api/usage/refresh`; the first usage read initializes the local index, each successful sync refreshes aggregate `token_count` rows from active sessions and `${CODEX_HOME:-~/.codex}/archived_sessions`, and responses include `summary` for the selected interval plus `total` for all indexed device data
+- Usage aggregation is exposed through `GET /api/usage` and `POST /api/usage/refresh`; the first usage read initializes the local index, each successful sync refreshes aggregate `token_count` rows from active sessions and `${CODEX_HOME:-~/.codex}/archived_sessions`, responses include `summary` for the selected interval plus `total` for all indexed device data, and `GET /api/usage?range=all-time` returns the all-device aggregate as its `summary`
 - Usage pricing starts from bundled standard OpenAI pricing defaults for known models, then applies `${CODEX_BOARDS_USAGE_PRICING_PATH}` when set or `usage-pricing.json` next to the SQLite database when present. Local pricing files can add or override model rates. Normal usage reads do not fetch pricing from the network
 - The desktop shell starts the backend on a local loopback port and injects that API base URL into the shared React app at runtime
 - The GNOME shell starts the same backend on a local loopback port and renders the board with native GTK/libadwaita widgets
@@ -118,8 +119,8 @@ You can also inspect and update the runtime parser settings from the web app's S
 The native GNOME app lives in `apps/gnome` and mirrors the current desktop feature surface:
 
 - project navigation and saved views
-- issue search, status, priority, parse mode, review, commit, and tag filters
-- issue detail windows with review toggling, Git evidence, traceability, warnings, parse preview, and sub-issues
+- issue search, parse mode, review, image, commit, and tag filters
+- issue detail windows with review toggling, image evidence, Git evidence, traceability, warnings, and parse preview
 - parser settings with Gemini and OpenRouter presets
 - sync history
 - manual sync and Multica export
@@ -147,7 +148,6 @@ The Flatpak manifest uses `org.gnome.Platform` and `org.gnome.Sdk` with runtime 
 ## Current limitations
 
 - Diff-heavy and policy-heavy content is intentionally excluded before parsing
-- Assignee and due date remain null unless the thread states them clearly
-- Manual merge/split correction endpoints are intentionally lightweight in v1
+- Inline image blobs are recorded as metadata only; retrievable previews depend on URL or file references surviving in the rollout
 - Desktop packaging currently targets macOS and Linux first
 - Flatpak Multica export depends on a usable `multica` command inside the package or sandbox environment

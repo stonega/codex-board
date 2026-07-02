@@ -47,7 +47,7 @@ The first working pipeline now produces:
 - `rollout files`: raw `.jsonl` records under `~/.codex/sessions`
 - `thread candidates`: normalized threads with filtered text, timestamps, and Git evidence
 - `projects`: inferred groupings derived from repository/workspace metadata
-- `issues`: parent issues plus optional sub-issues
+- `issues`: one imported issue per Codex thread, with optional image evidence
 - `sync runs`: temporary full-resync diagnostics
   - manual and onboarding runs scan the current rollout set and reparse only new, changed, removed, or parser-fingerprint-changed files
   - first-run onboarding can cap the initial scan to the latest 100 rollout files; subsequent manual syncs scan the full rollout set
@@ -85,6 +85,7 @@ Primary endpoints:
 - `GET /api/skills`
 - `GET /api/skills/suggestions`
 - `GET /api/skills/:id`
+- `PATCH /api/skills/:id/enabled`
 - `POST /api/skills/install`
 - `GET /api/usage`
 - `POST /api/usage/refresh`
@@ -96,8 +97,8 @@ Primary endpoints:
 - `GET /api/views`
 - `POST /api/views`
 
-The web UI consumes these endpoints directly and renders first-run provider onboarding, a user-started first sync screen with an optional latest-100 thread cap, project navigation, filterable issue tables, global and project-local skill lists, draft skill suggestions derived from repeated workspace thread patterns, usage charts, a runtime parser settings sheet with sync history, live homepage sync status, and right-side detail sheets.
+The web UI consumes these endpoints directly and renders first-run provider onboarding, a user-started first sync screen with an optional latest-100 thread cap, project navigation, filterable issue tables, global and project-local skill lists with Codex-backed enablement toggles, draft skill suggestions derived from repeated workspace thread patterns, usage charts, a runtime parser settings sheet with sync history, live homepage sync status, and right-side detail sheets.
 
-The usage dashboard follows the same local-first boundary as issue ingestion. It parses only token-count aggregates from local Codex JSONL logs, including archived sessions, and persists no prompts, assistant messages, tool output, command text, patches, or transcript snippets. `GET /api/usage` returns `summary` for the selected date interval and `total` for all indexed device data so the UI can show both scoped and all-time card values. Successful sync runs refresh the local usage index automatically. Estimated USD cost starts from bundled standard pricing defaults for known models, then applies local pricing JSON additions or overrides when present; normal dashboard reads do not fetch pricing from the network.
+The usage dashboard follows the same local-first boundary as issue ingestion. It parses only token-count aggregates from local Codex JSONL logs, including archived sessions, and persists no prompts, assistant messages, tool output, command text, patches, or transcript snippets. `GET /api/usage` returns `summary` for the selected date interval and `total` for all indexed device data so the UI can show both scoped and all-time card values. `GET /api/usage?range=all-time` is the explicit all-device aggregate API; its `summary` covers the full indexed device history. Successful sync runs refresh the local usage index automatically. Estimated USD cost starts from bundled standard pricing defaults for known models, then applies local pricing JSON additions or overrides when present; normal dashboard reads do not fetch pricing from the network.
 
 The desktop shells reuse the same HTTP API. The Tauri app launches the backend as a local companion process, waits for readiness, and then loads the shared web UI against the injected API base URL. The GNOME app follows the same sidecar lifecycle, but renders project navigation, filters, issue detail, parser settings, sync history, review triage, saved views, and Multica export with native GTK/libadwaita controls.

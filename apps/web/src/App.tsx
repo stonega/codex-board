@@ -7,6 +7,7 @@ import {
   ExternalLink,
   Filter,
   GitCommit,
+  Image as ImageIcon,
   Layout,
   List,
   ListTodo,
@@ -38,8 +39,6 @@ import type {
   IssueDetailResponse,
   IssueFilters,
   IssueListResponse,
-  IssuePriority,
-  IssueStatus,
   ParsedIssue,
   ParserProvider,
   ProjectListResponse,
@@ -59,6 +58,8 @@ import type {
   SyncStatusResponse,
   SyncTrigger,
   UpdateSettingsPayload,
+  UpdateSkillEnabledPayload,
+  UpdateSkillEnabledResponse,
 } from '@codex-boards/domain';
 
 import { UsagePage } from './UsagePage';
@@ -72,23 +73,6 @@ import {
   resolveApiBaseUrl,
   resolveSyncStatusWebSocketUrl,
 } from './lib/runtime';
-
-const STATUS_OPTIONS: Array<IssueStatus | 'all'> = [
-  'all',
-  'todo',
-  'in_progress',
-  'blocked',
-  'done',
-  'unknown',
-];
-const PRIORITY_OPTIONS: Array<IssuePriority | 'all'> = [
-  'all',
-  'urgent',
-  'high',
-  'medium',
-  'low',
-  'unknown',
-];
 
 type ParserPreset = {
   label: string;
@@ -206,18 +190,28 @@ async function postJson<T>(path: string, body?: unknown): Promise<T> {
   return (await response.json()) as T;
 }
 
+async function patchJson<T>(path: string, body?: unknown): Promise<T> {
+  const apiBaseUrl = await resolveApiBaseUrl();
+  const response = await fetch(`${apiBaseUrl}${path}`, {
+    method: 'PATCH',
+    headers: {
+      'content-type': 'application/json',
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new Error(`Request failed with ${response.status}`);
+  }
+
+  return (await response.json()) as T;
+}
+
 function buildIssueSearchParams(
   projectId: string,
   filters: IssueFilters,
 ): URLSearchParams {
   const search = new URLSearchParams({ projectId });
 
-  if (filters.status && filters.status !== 'all') {
-    search.set('status', filters.status);
-  }
-  if (filters.priority && filters.priority !== 'all') {
-    search.set('priority', filters.priority);
-  }
   if (filters.parseMode && filters.parseMode !== 'all') {
     search.set('parseMode', filters.parseMode);
   }
@@ -229,6 +223,9 @@ function buildIssueSearchParams(
   }
   if (filters.hasTags) {
     search.set('hasTags', 'true');
+  }
+  if (filters.hasImages) {
+    search.set('hasImages', 'true');
   }
   if (filters.tag) {
     search.set('tag', filters.tag);
@@ -249,6 +246,8 @@ function DetailSheet({
   onClose: () => void;
   onReviewToggle: (issueId: string, nextValue: boolean) => Promise<void>;
 }) {
+  const images = issue?.images ?? [];
+
   return (
     <Sheet
       open={Boolean(issue)}
@@ -260,7 +259,7 @@ function DetailSheet({
           <header className="flex justify-between items-start mb-8">
             <div>
               <p className="text-[0.75rem] font-medium text-notion-muted uppercase tracking-wider mb-2">
-                {issue.kind === 'parent' ? 'Parent issue' : 'Sub issue'}
+                Thread issue
               </p>
               <h2 className="text-3xl font-bold tracking-tight">
                 {issue.title}
@@ -275,18 +274,6 @@ function DetailSheet({
             <div className="pt-4 border-t border-notion-border grid grid-cols-2 gap-4">
               <div>
                 <p className="text-[0.75rem] font-medium text-notion-muted uppercase tracking-wider mb-2">
-                  Status
-                </p>
-                <Badge>{formatLabel(issue.status)}</Badge>
-              </div>
-              <div>
-                <p className="text-[0.75rem] font-medium text-notion-muted uppercase tracking-wider mb-2">
-                  Priority
-                </p>
-                <Badge>{formatLabel(issue.priority)}</Badge>
-              </div>
-              <div>
-                <p className="text-[0.75rem] font-medium text-notion-muted uppercase tracking-wider mb-2">
                   Parse mode
                 </p>
                 <Badge>{issue.parseMode}</Badge>
@@ -299,15 +286,21 @@ function DetailSheet({
               </div>
               <div>
                 <p className="text-[0.75rem] font-medium text-notion-muted uppercase tracking-wider mb-2">
-                  Assignee
+                  Messages
                 </p>
-                <p className="text-sm">{issue.assignee ?? 'Unassigned'}</p>
+                <p className="text-sm">{issue.stats.messageCount}</p>
               </div>
               <div>
                 <p className="text-[0.75rem] font-medium text-notion-muted uppercase tracking-wider mb-2">
-                  Due date
+                  Commands
                 </p>
-                <p className="text-sm">{issue.dueDate ?? 'Unset'}</p>
+                <p className="text-sm">{issue.stats.commandCount}</p>
+              </div>
+              <div>
+                <p className="text-[0.75rem] font-medium text-notion-muted uppercase tracking-wider mb-2">
+                  Images
+                </p>
+                <p className="text-sm">{issue.stats.imageCount}</p>
               </div>
             </div>
 
@@ -351,6 +344,70 @@ function DetailSheet({
 
             <div className="pt-4 border-t border-notion-border">
               <p className="text-[0.75rem] font-medium text-notion-muted uppercase tracking-wider mb-2">
+                Images
+              </p>
+              {images.length > 0 ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {images.map((image) => {
+                    const canPreview =
+                      image.sourceType === 'url' && Boolean(image.originalUrl);
+                    const label =
+                      image.caption ||
+                      image.filename ||
+                      formatLabel(image.sourceType);
+                    const source =
+                      image.originalUrl ||
+                      image.localPath ||
+                      image.messageExcerpt ||
+                      'No retrievable source';
+
+                    return (
+                      <article
+                        className="rounded border border-notion-border overflow-hidden"
+                        key={image.id}
+                      >
+                        {canPreview && image.originalUrl ? (
+                          <a
+                            href={image.originalUrl}
+                            rel="noreferrer"
+                            target="_blank"
+                          >
+                            <img
+                              alt={label}
+                              className="aspect-[4/3] w-full object-cover bg-[#f7f7f5]"
+                              loading="lazy"
+                              src={image.originalUrl}
+                            />
+                          </a>
+                        ) : (
+                          <div className="aspect-[4/3] w-full bg-[#f7f7f5] text-notion-muted flex items-center justify-center">
+                            <ImageIcon size={28} />
+                          </div>
+                        )}
+                        <div className="p-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-sm font-medium truncate">
+                              {label}
+                            </p>
+                            <Badge>{formatLabel(image.sourceType)}</Badge>
+                          </div>
+                          <p className="mt-1 text-[0.75rem] text-notion-muted break-all">
+                            {source}
+                          </p>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="text-sm text-notion-muted">
+                  No images were detected in this thread.
+                </p>
+              )}
+            </div>
+
+            <div className="pt-4 border-t border-notion-border">
+              <p className="text-[0.75rem] font-medium text-notion-muted uppercase tracking-wider mb-2">
                 Git evidence
               </p>
               <ul className="pl-5 list-disc text-sm text-notion-muted mb-3">
@@ -375,6 +432,7 @@ function DetailSheet({
               <ul className="pl-5 list-disc text-sm text-notion-muted mb-3">
                 <li>Thread: {issue.threadId}</li>
                 <li>Rollout: {issue.evidence.rolloutPath}</li>
+                <li>Started: {new Date(issue.startedAt).toLocaleString()}</li>
                 <li>Updated: {new Date(issue.updatedAt).toLocaleString()}</li>
               </ul>
               {issue.evidence.warnings.length > 0 ? (
@@ -387,41 +445,6 @@ function DetailSheet({
               <pre className="bg-[#f7f7f5] border border-notion-border p-3 rounded font-mono text-[0.81rem] whitespace-pre-wrap break-all">
                 {issue.evidence.parsePayloadPreview}
               </pre>
-            </div>
-
-            <div className="pt-4 border-t border-notion-border">
-              <p className="text-[0.75rem] font-medium text-notion-muted uppercase tracking-wider mb-2">
-                Sub issues
-              </p>
-              {issue.children && issue.children.length > 0 ? (
-                <div className="grid gap-3">
-                  {issue.children.map((child) => (
-                    <article
-                      className="p-2 rounded hover:bg-notion-hover transition-colors"
-                      key={child.id}
-                    >
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <strong className="text-sm font-medium">
-                            {child.title}
-                          </strong>
-                          <p className="text-[0.81rem] text-notion-muted mt-0.5">
-                            {child.summary}
-                          </p>
-                        </div>
-                        <div className="flex gap-1">
-                          <Badge>{formatLabel(child.status)}</Badge>
-                          <Badge>{formatLabel(child.priority)}</Badge>
-                        </div>
-                      </div>
-                    </article>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-sm text-notion-muted">
-                  No sub issues extracted for this thread.
-                </p>
-              )}
             </div>
           </section>
         </div>
@@ -585,7 +608,11 @@ function SkillList({
     <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 2xl:grid-cols-3">
       {skills.map((skill) => (
         <button
-          className="group flex min-h-40 w-full min-w-0 flex-col rounded-lg border border-notion-border bg-white p-4 text-left shadow-[0_1px_2px_rgba(15,15,15,0.03)] transition-colors hover:border-notion-muted/30 hover:bg-notion-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-notion-blue focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+          className={`group flex min-h-40 w-full min-w-0 flex-col rounded-lg border p-4 text-left shadow-[0_1px_2px_rgba(15,15,15,0.03)] transition-colors hover:border-notion-muted/30 hover:bg-notion-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-notion-blue focus-visible:ring-offset-2 focus-visible:ring-offset-white ${
+            skill.enabled
+              ? 'border-notion-border bg-white'
+              : 'border-notion-border bg-[#f7f7f5]'
+          }`}
           key={skill.id}
           onClick={() => onOpen(skill.id)}
           type="button"
@@ -599,7 +626,18 @@ function SkillList({
                 {skill.relativePath}
               </span>
             </div>
-            <Badge>{skill.sourceLabel}</Badge>
+            <div className="flex flex-wrap gap-1.5">
+              <Badge>{skill.sourceLabel}</Badge>
+              <Badge
+                className={
+                  skill.enabled
+                    ? 'bg-emerald-50 text-emerald-700'
+                    : 'bg-rose-50 text-rose-700'
+                }
+              >
+                {skill.enabled ? 'Enabled' : 'Disabled'}
+              </Badge>
+            </div>
           </div>
 
           <p className="line-clamp-4 text-sm leading-relaxed text-notion-muted">
@@ -620,14 +658,23 @@ function SkillDetailSheet({
   skill,
   onClose,
   onAddDraftSkill,
+  onUpdateSkillEnabled,
   addingDraftSkill,
   draftSkillMessage,
+  updatingSkillEnabled,
+  skillEnablementMessage,
 }: {
   skill: SkillDetail | null;
   onClose: () => void;
   onAddDraftSkill?: (target: SkillInstallTarget) => Promise<void>;
+  onUpdateSkillEnabled?: (
+    skill: SkillDetail,
+    enabled: boolean,
+  ) => Promise<void>;
   addingDraftSkill?: boolean;
   draftSkillMessage?: string | null;
+  updatingSkillEnabled?: boolean;
+  skillEnablementMessage?: string | null;
 }) {
   const [addMenuState, setAddMenuState] = useState<{
     skillId: string | null;
@@ -661,7 +708,40 @@ function SkillDetailSheet({
                 </p>
               ) : null}
             </div>
-            <div className="flex shrink-0 items-center gap-2">
+            <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+              {!isDraftSuggestion && onUpdateSkillEnabled ? (
+                <button
+                  aria-checked={skill.enabled}
+                  className={`inline-flex h-7 items-center gap-2 rounded-md border px-2.5 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-notion-blue focus-visible:ring-offset-2 ${
+                    skill.enabled
+                      ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                      : 'border-rose-200 bg-rose-50 text-rose-700'
+                  }`}
+                  disabled={updatingSkillEnabled}
+                  onClick={() =>
+                    void onUpdateSkillEnabled(skill, !skill.enabled)
+                  }
+                  role="switch"
+                  type="button"
+                >
+                  <span
+                    className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${
+                      skill.enabled ? 'bg-emerald-500' : 'bg-rose-400'
+                    }`}
+                  >
+                    <span
+                      className={`h-3 w-3 rounded-full bg-white shadow-sm transition-transform ${
+                        skill.enabled ? 'translate-x-3.5' : 'translate-x-0.5'
+                      }`}
+                    />
+                  </span>
+                  {updatingSkillEnabled
+                    ? 'Saving...'
+                    : skill.enabled
+                      ? 'Enabled'
+                      : 'Disabled'}
+                </button>
+              ) : null}
               {isDraftSuggestion && onAddDraftSkill ? (
                 <div className="relative">
                   <Button
@@ -716,6 +796,12 @@ function SkillDetailSheet({
           {draftSkillMessage ? (
             <p className="rounded border border-notion-border bg-notion-hover p-3 text-sm text-notion-muted">
               {draftSkillMessage}
+            </p>
+          ) : null}
+
+          {skillEnablementMessage ? (
+            <p className="rounded border border-notion-border bg-notion-hover p-3 text-sm text-notion-muted">
+              {skillEnablementMessage}
             </p>
           ) : null}
 
@@ -1432,9 +1518,13 @@ function BoardPage() {
   const [loadingSettings, setLoadingSettings] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
   const [addingDraftSkill, setAddingDraftSkill] = useState(false);
+  const [updatingSkillEnabled, setUpdatingSkillEnabled] = useState(false);
   const [draftSkillMessage, setDraftSkillMessage] = useState<string | null>(
     null,
   );
+  const [skillEnablementMessage, setSkillEnablementMessage] = useState<
+    string | null
+  >(null);
   const [runningSync, setRunningSync] = useState(false);
   const [syncRefreshToken, setSyncRefreshToken] = useState(0);
   const [limitOnboardingSyncToLatest100, setLimitOnboardingSyncToLatest100] =
@@ -1442,8 +1532,6 @@ function BoardPage() {
   const [exportingMultica, setExportingMultica] = useState(false);
   const [exportMessage, setExportMessage] = useState<string | null>(null);
   const [filters, setFilters] = useState<IssueFilters>({
-    status: 'all',
-    priority: 'all',
     parseMode: 'all',
     query: '',
   });
@@ -1789,6 +1877,7 @@ function BoardPage() {
 
   async function openSkill(skillId: string, scopedProjectId?: string | null) {
     setDraftSkillMessage(null);
+    setSkillEnablementMessage(null);
     const projectQuery = scopedProjectId
       ? `?projectId=${encodeURIComponent(scopedProjectId)}`
       : '';
@@ -1806,11 +1895,13 @@ function BoardPage() {
 
   function openSkillSuggestion(suggestion: SkillSuggestion) {
     setDraftSkillMessage(null);
+    setSkillEnablementMessage(null);
     const relativePath = `.agents/skills/${suggestion.name}/SKILL.md`;
     setSelectedSkill({
       id: suggestion.id,
       name: suggestion.name,
       description: suggestion.description,
+      enabled: true,
       source: 'project',
       sourceLabel: 'Draft suggestion',
       sourceName: selectedProject?.id ?? null,
@@ -1898,6 +1989,80 @@ function BoardPage() {
       );
     } finally {
       setAddingDraftSkill(false);
+    }
+  }
+
+  function replaceSkillSummary(
+    response: SkillListResponse | null,
+    updatedSkill: SkillSummary,
+  ): SkillListResponse | null {
+    if (!response) {
+      return response;
+    }
+
+    let replaced = false;
+    const skills = response.skills.map((skill) => {
+      if (skill.id !== updatedSkill.id) {
+        return skill;
+      }
+
+      replaced = true;
+      return updatedSkill;
+    });
+
+    return replaced
+      ? {
+          ...response,
+          skills,
+        }
+      : response;
+  }
+
+  async function setSkillEnabled(skill: SkillDetail, enabled: boolean) {
+    setUpdatingSkillEnabled(true);
+    setSkillEnablementMessage(null);
+    setDraftSkillMessage(null);
+
+    const projectQuery = skill.projectId
+      ? `?projectId=${encodeURIComponent(skill.projectId)}`
+      : '';
+    const payload: UpdateSkillEnabledPayload = {
+      enabled,
+    };
+
+    try {
+      const response = await patchJson<UpdateSkillEnabledResponse>(
+        `/skills/${encodeURIComponent(skill.id)}/enabled${projectQuery}`,
+        payload,
+      );
+      if (!response.ok || !response.skill) {
+        throw new Error(response.message || 'Failed to update skill.');
+      }
+
+      const updatedSkill = response.skill;
+      setSelectedSkill((current) =>
+        current?.id === updatedSkill.id
+          ? {
+              ...updatedSkill,
+              content: current.content,
+            }
+          : current,
+      );
+      setGlobalSkillsResponse((current) =>
+        replaceSkillSummary(current, updatedSkill),
+      );
+      setProjectSkillsResponse((current) =>
+        replaceSkillSummary(current, updatedSkill),
+      );
+      setSkillEnablementMessage(response.message);
+    } catch (toggleError) {
+      setSkillEnablementMessage(
+        toggleError instanceof Error
+          ? toggleError.message
+          : 'Failed to update skill.',
+      );
+    } finally {
+      setUpdatingSkillEnabled(false);
     }
   }
 
@@ -2375,47 +2540,10 @@ function BoardPage() {
                             ? 'Exporting…'
                             : 'Export to Multica'}
                         </Button>
-                        <Button variant="default" size="sm">
-                          <Plus size={14} /> New
-                        </Button>
                       </div>
                     </div>
 
                     <div className="px-12 py-2 flex items-center gap-2 overflow-x-auto">
-                      <Select
-                        onChange={(event) =>
-                          setFilters((current) => ({
-                            ...current,
-                            status: event.target.value as IssueStatus | 'all',
-                          }))
-                        }
-                        value={filters.status ?? 'all'}
-                        className="text-[0.81rem] h-7"
-                      >
-                        {STATUS_OPTIONS.map((status) => (
-                          <option key={status} value={status}>
-                            {formatLabel(status)}
-                          </option>
-                        ))}
-                      </Select>
-                      <Select
-                        onChange={(event) =>
-                          setFilters((current) => ({
-                            ...current,
-                            priority: event.target.value as
-                              | IssuePriority
-                              | 'all',
-                          }))
-                        }
-                        value={filters.priority ?? 'all'}
-                        className="text-[0.81rem] h-7"
-                      >
-                        {PRIORITY_OPTIONS.map((priority) => (
-                          <option key={priority} value={priority}>
-                            {formatLabel(priority)}
-                          </option>
-                        ))}
-                      </Select>
                       <Button
                         onClick={() =>
                           setFilters((current) => ({
@@ -2466,6 +2594,23 @@ function BoardPage() {
                         }
                       >
                         <Tags size={14} /> Tags
+                      </Button>
+                      <Button
+                        onClick={() =>
+                          setFilters((current) => ({
+                            ...current,
+                            hasImages: !current.hasImages,
+                          }))
+                        }
+                        variant="ghost"
+                        size="sm"
+                        className={
+                          filters.hasImages
+                            ? 'text-notion-blue'
+                            : 'text-notion-muted'
+                        }
+                      >
+                        <ImageIcon size={14} /> Images
                       </Button>
                     </div>
                   </>
@@ -2522,26 +2667,26 @@ function BoardPage() {
                     <TableEmpty>Loading issues...</TableEmpty>
                   ) : issuesResponse?.issues.length ? (
                     <TableWrapper>
-                      <Table className="min-w-[860px]">
+                      <Table className="min-w-[820px]">
                         <thead>
                           <tr className="border-b border-notion-border">
                             <th className="w-full min-w-72 py-2 px-3 text-left text-sm font-medium text-notion-muted whitespace-nowrap">
                               Title
                             </th>
-                            <th className="w-[1%] py-2 px-3 text-left text-sm font-medium text-notion-muted whitespace-nowrap">
-                              Status
-                            </th>
-                            <th className="w-[1%] py-2 px-3 text-left text-sm font-medium text-notion-muted whitespace-nowrap">
-                              Priority
-                            </th>
                             <th className="min-w-44 py-2 px-3 text-left text-sm font-medium text-notion-muted whitespace-nowrap">
                               Tags
                             </th>
                             <th className="w-[1%] py-2 px-3 text-left text-sm font-medium text-notion-muted whitespace-nowrap">
-                              Sub issues
+                              Images
                             </th>
                             <th className="w-[1%] py-2 px-3 text-left text-sm font-medium text-notion-muted whitespace-nowrap">
                               Commits
+                            </th>
+                            <th className="w-[1%] py-2 px-3 text-left text-sm font-medium text-notion-muted whitespace-nowrap">
+                              Parse
+                            </th>
+                            <th className="w-[1%] py-2 px-3 text-left text-sm font-medium text-notion-muted whitespace-nowrap">
+                              Review
                             </th>
                             <th className="w-[1%] py-2 px-3 text-left text-sm font-medium text-notion-muted whitespace-nowrap">
                               Updated
@@ -2565,12 +2710,6 @@ function BoardPage() {
                                   </strong>
                                 </button>
                               </td>
-                              <td className="py-2 px-3 align-top whitespace-nowrap">
-                                <Badge>{formatLabel(issue.status)}</Badge>
-                              </td>
-                              <td className="py-2 px-3 align-top whitespace-nowrap">
-                                <Badge>{formatLabel(issue.priority)}</Badge>
-                              </td>
                               <td className="min-w-44 py-2 px-3 align-top">
                                 <div className="flex flex-wrap gap-1">
                                   {issue.tags.slice(0, 3).map((tag) => (
@@ -2584,10 +2723,18 @@ function BoardPage() {
                                 </div>
                               </td>
                               <td className="py-2 px-3 align-top text-sm whitespace-nowrap">
-                                {issue.subIssueCount}
+                                {issue.stats.imageCount}
                               </td>
                               <td className="py-2 px-3 align-top text-sm whitespace-nowrap">
                                 {issue.git.commits.length}
+                              </td>
+                              <td className="py-2 px-3 align-top whitespace-nowrap">
+                                <Badge>{issue.parseMode}</Badge>
+                              </td>
+                              <td className="py-2 px-3 align-top whitespace-nowrap">
+                                <Badge>
+                                  {issue.needsReview ? 'Review' : 'Reviewed'}
+                                </Badge>
                               </td>
                               <td className="py-2 px-3 align-top text-sm text-notion-muted whitespace-nowrap">
                                 {new Date(issue.updatedAt).toLocaleDateString()}
@@ -2620,11 +2767,15 @@ function BoardPage() {
         addingDraftSkill={addingDraftSkill}
         draftSkillMessage={draftSkillMessage}
         onAddDraftSkill={addDraftSkill}
+        onUpdateSkillEnabled={setSkillEnabled}
         skill={selectedSkill}
+        skillEnablementMessage={skillEnablementMessage}
         onClose={() => {
           setSelectedSkill(null);
           setDraftSkillMessage(null);
+          setSkillEnablementMessage(null);
         }}
+        updatingSkillEnabled={updatingSkillEnabled}
       />
       <SettingsModal
         error={settingsError}

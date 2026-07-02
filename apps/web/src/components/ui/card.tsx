@@ -51,5 +51,5 @@ export function CardContent({
   className,
   ...props
 }: HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn('p-4 pt-0', className)} {...props} />;
+  return <div className={cn('p-2 pt-0', className)} {...props} />;
 }

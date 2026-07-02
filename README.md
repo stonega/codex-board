@@ -2,7 +2,7 @@
 
 `codex-boards` is a local-first Bun monorepo that turns local Codex rollout history into a project-oriented issue board.
 
-It scans Codex session rollouts, keeps Git-backed threads, extracts parent issues and sub-issues, stores the results in SQLite, and renders them in a React/Vite workspace with project navigation, filters, saved views, detail sheets, parser settings, live sync status, first-run onboarding, and local skill catalogs.
+It scans Codex session rollouts, keeps Git-backed threads, creates one issue per thread, stores Git and image evidence in SQLite, and renders the results in a React/Vite workspace with project navigation, filters, saved views, detail sheets, parser settings, live sync status, first-run onboarding, and local skill catalogs.
 
 ![Codex Boards usage dashboard](screenshots/usage.png)
 
@@ -65,17 +65,17 @@ The sync pipeline:
 2. Keeps only threads with Git workspace evidence.
 3. Infers projects from repository names and workspace paths.
 4. Builds a truncated parse payload for each thread.
-5. Extracts a parent issue and optional sub-issues through an OpenAI-compatible parser when configured.
+5. Extracts one issue summary per thread through an OpenAI-compatible parser when configured.
 6. Falls back to deterministic issue shaping when AI parsing is unavailable or fails.
 7. Skips unchanged rollout files on later manual syncs unless the file or parser fingerprint changed; automatic background sync only queues newly added or file-updated threads.
-8. Stores projects, issues, Git evidence, parser diagnostics, sync runs, saved views, and settings in SQLite.
+8. Stores projects, issues, Git evidence, image evidence, parser diagnostics, sync runs, saved views, and settings in SQLite.
 9. Exposes the data through a local HTTP/WebSocket API consumed by the web UI.
 
 The web UI supports:
 
 - project sidebar navigation
-- issue table with search, status, priority, parse mode, review, commit, tag, and saved-view filters
-- issue detail sheets with traceability, Git evidence, warnings, parse previews, sub-issues, review toggling, merge, and split actions
+- issue table with search, parse mode, review, image, commit, tag, and saved-view filters
+- issue detail sheets with traceability, image evidence, Git evidence, warnings, parse previews, and review toggling
 - parser settings with persisted OpenAI-compatible base URL, model, and API key status
 - first-run provider setup, an onboarding sync screen, homepage sync status, and sync history with per-file parse logs
 - global skills catalog discovered from local Codex, agent, and enabled plugin skill roots
@@ -153,8 +153,8 @@ bun run --filter @codex-boards/backend start -- issues export multica --project 
 
 Useful export flags:
 
-- `--issue <issue-id>`: export only selected parent issues
-- `--no-children`: skip sub-issues
+- `--issue <issue-id>`: export only selected thread issues
+- `--no-children`: accepted for compatibility; thread issues have no children
 - `--dry-run`: print generated `multica issue create` commands without executing them
 - `--skip-sync`: export the current SQLite state without running a sync first
 
@@ -192,8 +192,6 @@ Primary backend endpoints:
 - `GET /api/issues?projectId=...`
 - `GET /api/issues/:id`
 - `POST /api/issues/:id/review`
-- `POST /api/issues/:id/merge`
-- `POST /api/issues/:id/split`
 - `GET /api/settings`
 - `POST /api/settings`
 - `POST /api/sync`
