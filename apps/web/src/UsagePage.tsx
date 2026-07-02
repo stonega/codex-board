@@ -207,7 +207,7 @@ function LineChartCard({
         <CardTitle>{title}</CardTitle>
         <CardDescription>{description}</CardDescription>
       </CardHeader>
-      <CardContent className="p-4 pt-0">
+      <CardContent className="p-2 pt-0">
         <ChartContainer config={config} className="h-[240px]">
           <LineChart data={data} margin={{ left: 12, right: 12 }}>
             <CartesianGrid vertical={false} />
@@ -324,14 +324,14 @@ export function UsagePage({ refreshToken = 0 }: { refreshToken?: number }) {
             <h2 className="text-3xl font-bold leading-tight tracking-tight sm:text-[2.25rem]">
               Usage
             </h2>
+            <p className="mt-1 max-w-2xl text-[0.75rem] leading-snug text-notion-muted">
+              Local data only. Values are fetched from local logs and may differ
+              from official usage or billing data.
+            </p>
             <p className="mt-1 text-sm text-notion-muted">
               {usage
                 ? `${usage.range.startDate} to ${usage.range.endDate}`
                 : 'Local aggregate token history'}
-            </p>
-            <p className="mt-1 max-w-2xl text-[0.75rem] leading-snug text-notion-muted">
-              Local data only. Values are fetched from local logs and may differ
-              from official usage or billing data.
             </p>
           </div>
         </div>
