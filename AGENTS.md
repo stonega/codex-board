@@ -114,6 +114,8 @@ Agents must not:
 - change project structure casually
 - replace explicit heuristics with hidden remote dependencies
 - modify ingestion-related data examples without checking downstream tests
+- start the service in the background for debugging. The user keeps the
+  service running; if it is not running, ask the user to start it.
 
 When unsure, agents should request clarification.
 
@@ -124,4 +126,3 @@ Agent-generated changes must:
 - pass relevant tests
 - follow repository conventions
 - include documentation updates when contracts or workflows change
-
