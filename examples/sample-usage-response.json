@@ -1,0 +1,72 @@
+{
+  "generatedAt": "2026-06-01T12:00:00.000Z",
+  "range": {
+    "preset": "custom",
+    "startDate": "2026-06-01",
+    "endDate": "2026-06-01"
+  },
+  "summary": {
+    "totalTokens": 1200,
+    "estimatedCostUsd": 0.0048,
+    "cachedInputTokens": 300,
+    "uncachedInputTokens": 700,
+    "reasoningOutputTokens": 50,
+    "newThreadCount": 1,
+    "eventCount": 1,
+    "cacheRatio": 0.3
+  },
+  "total": {
+    "totalTokens": 1800,
+    "estimatedCostUsd": 0.0066,
+    "cachedInputTokens": 400,
+    "uncachedInputTokens": 1100,
+    "reasoningOutputTokens": 75,
+    "newThreadCount": 2,
+    "eventCount": 2,
+    "cacheRatio": 0.26666666666666666
+  },
+  "pricing": {
+    "loaded": true,
+    "path": "/home/user/.codex/usage-pricing.json",
+    "source": {
+      "name": "local pricing",
+      "tier": "standard",
+      "fetchedAt": "2026-06-01T00:00:00.000Z"
+    },
+    "pricedTokens": 1200,
+    "unpricedTokens": 0,
+    "pricedTokenRatio": 1,
+    "unpricedModelCount": 0
+  },
+  "refresh": {
+    "refreshedAt": "2026-06-01T12:00:00.000Z",
+    "scannedFiles": 2,
+    "parsedEvents": 2,
+    "skippedEvents": 0,
+    "includedArchived": true
+  },
+  "daily": [
+    {
+      "date": "2026-06-01",
+      "totalTokens": 1200,
+      "estimatedCostUsd": 0.0048,
+      "cachedInputTokens": 300,
+      "uncachedInputTokens": 700,
+      "reasoningOutputTokens": 50,
+      "newThreadCount": 1
+    }
+  ],
+  "models": [
+    {
+      "model": "gpt-test",
+      "pricedAs": "gpt-test",
+      "pricingStatus": "priced",
+      "totalTokens": 1200,
+      "cachedInputTokens": 300,
+      "uncachedInputTokens": 700,
+      "outputTokens": 200,
+      "reasoningOutputTokens": 50,
+      "estimatedCostUsd": 0.0048
+    }
+  ]
+}

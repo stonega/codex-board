@@ -3,6 +3,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 import type {
+  UsageAggregateSummary,
   UsageDailyPoint,
   UsageModelSummary,
   UsagePricingSummary,
@@ -157,6 +158,8 @@ export class UsageService {
     const buckets = createDailyBuckets(range.startDate, range.endDate);
     const modelBuckets = new Map<string, UsageModelSummary>();
     const firstThreadDate = new Map<string, string>();
+    const totalSummary = createUsageSummaryAccumulator();
+    const intervalSummary = createUsageSummaryAccumulator();
 
     for (const event of events) {
       const eventDay = localDateKey(event.eventTimestamp);
@@ -166,25 +169,20 @@ export class UsageService {
       }
     }
 
-    let eventCount = 0;
-    let totalTokens = 0;
-    let cachedInputTokens = 0;
-    let uncachedInputTokens = 0;
-    let outputTokens = 0;
-    let reasoningOutputTokens = 0;
-    let estimatedCostUsd = 0;
     let pricedTokens = 0;
     let unpricedTokens = 0;
     const unpricedModels = new Set<string>();
 
     for (const event of events) {
+      const cost = estimateEventCostUsd(event, pricing);
+      addUsageEventToSummary(totalSummary, event, cost);
+
       const eventDay = localDateKey(event.eventTimestamp);
       const bucket = buckets.get(eventDay);
       if (!bucket) {
         continue;
       }
 
-      const cost = estimateEventCostUsd(event, pricing);
       const model = event.model ?? 'Unknown model';
       const rates = ratesForModel(model, pricing);
       const pricedAs = pricedAsModel(model, pricing);
@@ -204,12 +202,7 @@ export class UsageService {
         estimatedCostUsd: rates ? 0 : null,
       };
 
-      eventCount += 1;
-      totalTokens += event.totalTokens;
-      cachedInputTokens += event.cachedInputTokens;
-      uncachedInputTokens += event.uncachedInputTokens;
-      outputTokens += event.outputTokens;
-      reasoningOutputTokens += event.reasoningOutputTokens;
+      addUsageEventToSummary(intervalSummary, event, cost);
       bucket.totalTokens += event.totalTokens;
       bucket.cachedInputTokens += event.cachedInputTokens;
       bucket.uncachedInputTokens += event.uncachedInputTokens;
@@ -225,7 +218,6 @@ export class UsageService {
         unpricedModels.add(model);
       } else {
         pricedTokens += event.totalTokens;
-        estimatedCostUsd += cost;
         bucket.estimatedCostUsd += cost;
         modelBucket.estimatedCostUsd =
           (modelBucket.estimatedCostUsd ?? 0) + cost;
@@ -234,12 +226,12 @@ export class UsageService {
       modelBuckets.set(model, modelBucket);
     }
 
-    let newThreadCount = 0;
+    totalSummary.newThreadCount = firstThreadDate.size;
     for (const startedAt of firstThreadDate.values()) {
       const bucket = buckets.get(startedAt);
       if (bucket) {
         bucket.newThreadCount += 1;
-        newThreadCount += 1;
+        intervalSummary.newThreadCount += 1;
       }
     }
 
@@ -251,19 +243,8 @@ export class UsageService {
     return {
       generatedAt: new Date().toISOString(),
       range,
-      summary: {
-        totalTokens,
-        estimatedCostUsd: roundMoney(estimatedCostUsd),
-        cachedInputTokens,
-        uncachedInputTokens,
-        reasoningOutputTokens,
-        newThreadCount,
-        eventCount,
-        cacheRatio:
-          cachedInputTokens + uncachedInputTokens > 0
-            ? cachedInputTokens / (cachedInputTokens + uncachedInputTokens)
-            : 0,
-      },
+      summary: finalizeUsageSummary(intervalSummary),
+      total: finalizeUsageSummary(totalSummary),
       pricing: {
         loaded: pricing.loaded,
         path: pricing.path,
@@ -289,6 +270,45 @@ export class UsageService {
         .sort((left, right) => right.totalTokens - left.totalTokens),
     };
   }
+}
+
+function createUsageSummaryAccumulator(): UsageAggregateSummary {
+  return {
+    totalTokens: 0,
+    estimatedCostUsd: 0,
+    cachedInputTokens: 0,
+    uncachedInputTokens: 0,
+    reasoningOutputTokens: 0,
+    newThreadCount: 0,
+    eventCount: 0,
+    cacheRatio: 0,
+  };
+}
+
+function addUsageEventToSummary(
+  summary: UsageAggregateSummary,
+  event: UsageEventRecord,
+  estimatedCostUsd: number | null,
+): void {
+  summary.eventCount += 1;
+  summary.totalTokens += event.totalTokens;
+  summary.cachedInputTokens += event.cachedInputTokens;
+  summary.uncachedInputTokens += event.uncachedInputTokens;
+  summary.reasoningOutputTokens += event.reasoningOutputTokens;
+  if (estimatedCostUsd !== null) {
+    summary.estimatedCostUsd += estimatedCostUsd;
+  }
+}
+
+function finalizeUsageSummary(
+  summary: UsageAggregateSummary,
+): UsageAggregateSummary {
+  const inputTokens = summary.cachedInputTokens + summary.uncachedInputTokens;
+  return {
+    ...summary,
+    estimatedCostUsd: roundMoney(summary.estimatedCostUsd),
+    cacheRatio: inputTokens > 0 ? summary.cachedInputTokens / inputTokens : 0,
+  };
 }
 
 function listUsageLogFiles(config: AppConfig): Array<{

@@ -153,6 +153,17 @@ export interface UsageRefreshSummary {
   includedArchived: boolean;
 }
 
+export interface UsageAggregateSummary {
+  totalTokens: number;
+  estimatedCostUsd: number;
+  cachedInputTokens: number;
+  uncachedInputTokens: number;
+  reasoningOutputTokens: number;
+  newThreadCount: number;
+  eventCount: number;
+  cacheRatio: number;
+}
+
 export interface UsageSummaryResponse {
   generatedAt: string;
   range: {
@@ -160,16 +171,8 @@ export interface UsageSummaryResponse {
     startDate: string;
     endDate: string;
   };
-  summary: {
-    totalTokens: number;
-    estimatedCostUsd: number;
-    cachedInputTokens: number;
-    uncachedInputTokens: number;
-    reasoningOutputTokens: number;
-    newThreadCount: number;
-    eventCount: number;
-    cacheRatio: number;
-  };
+  summary: UsageAggregateSummary;
+  total: UsageAggregateSummary;
   pricing: UsagePricingSummary;
   refresh: UsageRefreshSummary;
   daily: UsageDailyPoint[];

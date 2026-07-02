@@ -151,11 +151,15 @@ function MetricCard({
   label,
   value,
   detail,
+  secondaryLabel = 'Total',
+  secondaryValue,
 }: {
   icon: ReactNode;
   label: string;
   value: string;
   detail?: string;
+  secondaryLabel?: string;
+  secondaryValue?: string;
 }) {
   return (
     <Card className="p-4">
@@ -167,13 +171,23 @@ function MetricCard({
           <p className="text-[0.75rem] font-semibold uppercase tracking-wider text-notion-muted">
             {label}
           </p>
-          <strong className="mt-1 block truncate text-xl font-semibold tracking-tight">
+          <strong className="mt-1 block break-words text-xl font-semibold tracking-tight">
             {value}
           </strong>
           {detail ? (
-            <p className="mt-1 truncate text-[0.75rem] text-notion-muted">
+            <p className="mt-1 text-[0.75rem] leading-snug text-notion-muted">
               {detail}
             </p>
+          ) : null}
+          {secondaryValue ? (
+            <div className="mt-2 flex items-baseline justify-between gap-2 border-t border-notion-border pt-2 text-[0.75rem]">
+              <span className="shrink-0 text-notion-muted">
+                {secondaryLabel}
+              </span>
+              <span className="min-w-0 break-words text-right font-medium text-notion-text">
+                {secondaryValue}
+              </span>
+            </div>
           ) : null}
         </div>
       </CardContent>
@@ -336,28 +350,32 @@ export function UsagePage({ refreshToken = 0 }: { refreshToken?: number }) {
           detail={`${formatNumber(usage?.summary.eventCount ?? 0)} model calls`}
           icon={<Sigma />}
           label="Tokens"
+          secondaryValue={formatNumber(usage?.total.totalTokens ?? 0)}
           value={formatNumber(usage?.summary.totalTokens ?? 0)}
         />
         <MetricCard
           detail={
             usage?.pricing.unpricedTokens
               ? `${formatNumber(usage.pricing.unpricedTokens)} unpriced tokens`
-              : 'All visible tokens priced'
+              : 'All selected tokens priced'
           }
           icon={<CircleDollarSign />}
           label="Estimated fee"
+          secondaryValue={formatMoney(usage?.total.estimatedCostUsd ?? 0)}
           value={formatMoney(usage?.summary.estimatedCostUsd ?? 0)}
         />
         <MetricCard
           detail={`${formatNumber(usage?.summary.cachedInputTokens ?? 0)} cached input`}
           icon={<RefreshCw />}
           label="Cache ratio"
+          secondaryValue={formatPercent(usage?.total.cacheRatio ?? 0)}
           value={formatPercent(usage?.summary.cacheRatio ?? 0)}
         />
         <MetricCard
           detail="New thread starts"
           icon={<CalendarDays />}
           label="Threads"
+          secondaryValue={formatNumber(usage?.total.newThreadCount ?? 0)}
           value={formatNumber(usage?.summary.newThreadCount ?? 0)}
         />
         <MetricCard
@@ -368,6 +386,8 @@ export function UsagePage({ refreshToken = 0 }: { refreshToken?: number }) {
           }
           icon={<RefreshCw />}
           label="Usage index"
+          secondaryLabel="Selected"
+          secondaryValue={`${formatNumber(usage?.summary.eventCount ?? 0)} calls`}
           value={formatNumber(usage?.refresh.parsedEvents ?? 0)}
         />
       </div>

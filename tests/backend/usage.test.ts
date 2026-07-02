@@ -133,6 +133,18 @@ describe('usage api', () => {
         totalTokens: 1200,
       },
     );
+    writeUsageLog(
+      join(sessionsRoot, 'previous.jsonl'),
+      'session-previous',
+      '2026-05-31T08:00:00.000Z',
+      {
+        inputTokens: 500,
+        cachedInputTokens: 100,
+        outputTokens: 100,
+        reasoningOutputTokens: 25,
+        totalTokens: 600,
+      },
+    );
 
     const server = createAppServer({
       port: 7788,
@@ -152,8 +164,8 @@ describe('usage api', () => {
       expect(response.status).toBe(200);
       expect(await response.json()).toMatchObject({
         refresh: {
-          scannedFiles: 1,
-          parsedEvents: 1,
+          scannedFiles: 2,
+          parsedEvents: 2,
           skippedEvents: 0,
           includedArchived: true,
         },
@@ -164,6 +176,14 @@ describe('usage api', () => {
           reasoningOutputTokens: 50,
           newThreadCount: 1,
           eventCount: 1,
+        },
+        total: {
+          totalTokens: 1800,
+          cachedInputTokens: 400,
+          uncachedInputTokens: 1100,
+          reasoningOutputTokens: 75,
+          newThreadCount: 2,
+          eventCount: 2,
         },
       });
     } finally {

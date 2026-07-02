@@ -21,11 +21,11 @@ The UI emphasizes reviewability:
 - each sync run shows a per-file parse log for imported, skipped, and failed rollouts
 - the homepage shows live sync status and the next scheduled background sync
 - saved views can pin review queues or Git-heavy work
-- the Usage page charts aggregate token history, estimated local fee, cached input, uncached input, reasoning output, and newly started threads by day
+- the Usage page shows selected-interval token, fee, cache, thread, and index cards with all-device totals, plus charts for daily aggregate token history, cached input, uncached input, reasoning output, and newly started threads
 - the Settings dialog exposes the active parser base URL, model, API key status, Gemini/OpenRouter/DeepSeek presets, and those settings persist across backend restarts
 
 After the first completed sync, the backend checks for rollout changes in the background once per minute. Unchanged files are skipped; changed files and parser setting changes are reparsed.
 
-Usage charts read aggregate token counters from local Codex logs, including archived sessions. The usage index refreshes automatically after sync runs. Estimated fees use bundled standard pricing defaults for known models, and a local `usage-pricing.json` file can add or override rates. Unpriced models remain visible instead of being hidden from totals.
+Usage charts read aggregate token counters from local Codex logs, including archived sessions. The usage API returns both the selected interval summary and an all-device total from the local index. The usage index refreshes automatically after sync runs. Estimated fees use bundled standard pricing defaults for known models, and a local `usage-pricing.json` file can add or override rates. Unpriced models remain visible instead of being hidden from totals.
 
 The native GNOME app provides the same core workflows with GTK/libadwaita controls: project navigation, saved views, filtering, sync, parser settings, sync history, review toggles, traceability details, sub-issues, and Multica export.
