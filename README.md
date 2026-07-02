@@ -20,7 +20,7 @@ Recommended local browser workflow:
 bun run codex-board
 ```
 
-The `codex-board` CLI starts the backend API and Vite web app locally, waits for both ports to become reachable, and opens the web UI. On first open, the UI asks for an OpenAI-compatible parser provider, runs the first sync, and then enters the board. After that, the backend schedules background sync once per minute for newly added or file-updated threads, and the homepage shows live status.
+The `codex-board` CLI starts the backend API and Vite web app locally, waits for both ports to become reachable, and opens the web UI. On first open, the UI defaults to the Codex CLI parser, shows parse output language as its own second step, runs the first sync, and then enters the board. After that, the backend schedules background sync once per minute for newly added or file-updated threads, and the homepage shows live status.
 
 Separate local servers:
 
@@ -36,7 +36,7 @@ Default local URLs:
 
 ## Current Packages
 
-- `apps/backend`: Hono API, rollout sync service, SQLite persistence, OpenAI-compatible parsing, fallback issue extraction, skill discovery, workspace skill suggestions, and Multica export.
+- `apps/backend`: Hono API, rollout sync service, SQLite persistence, Codex CLI/OpenAI-compatible parsing, fallback issue extraction, skill discovery, workspace skill suggestions, and Multica export.
 - `apps/web`: React 19 + Vite app with the board UI, issue detail sheets, runtime parser settings, sync history, global skills, project skills, and draft skill suggestion cards.
 - `packages/domain`: Shared TypeScript contracts and deterministic helpers for projects, issues, sync diagnostics, parser settings, skills, and exports.
 
@@ -65,7 +65,7 @@ The sync pipeline:
 2. Keeps only threads with Git workspace evidence.
 3. Infers projects from repository names and workspace paths.
 4. Builds a truncated parse payload for each thread.
-5. Extracts one issue summary per thread through an OpenAI-compatible parser when configured.
+5. Extracts one issue summary per thread through Codex CLI or an OpenAI-compatible parser when configured.
 6. Falls back to deterministic issue shaping when AI parsing is unavailable or fails.
 7. Skips unchanged rollout files on later manual syncs unless the file or parser fingerprint changed; automatic background sync only queues newly added or file-updated threads.
 8. Stores projects, issues, Git evidence, image evidence, parser diagnostics, sync runs, saved views, and settings in SQLite.
@@ -76,8 +76,8 @@ The web UI supports:
 - project sidebar navigation
 - issue table with search, parse mode, review, image, commit, tag, and saved-view filters
 - issue detail sheets with traceability, image evidence, Git evidence, warnings, parse previews, and review toggling
-- parser settings with persisted OpenAI-compatible base URL, model, and API key status
-- first-run provider setup, an onboarding sync screen, homepage sync status, and sync history with per-file parse logs
+- parser settings with persisted provider, model, output language, and API key status
+- first-run provider setup, a dedicated output-language step, an onboarding sync screen, homepage sync status, and sync history with per-file parse logs
 - global skills catalog discovered from local Codex, agent, and enabled plugin skill roots
 - project skills catalog discovered from `.codex/skills` and `.agents/skills` inside each project workspace
 - draft skill suggestions grouped from repeated workspace prompts and assistant outcomes
@@ -177,11 +177,12 @@ CODEX_BOARDS_CODEX_CLI_BIN=
 OPENAI_COMPAT_BASE_URL=
 OPENAI_COMPAT_API_KEY=
 OPENAI_COMPAT_MODEL=
+CODEX_BOARDS_PARSE_OUTPUT_LANGUAGE=
 ```
 
 The same parser settings can be inspected and updated from the web app's Settings dialog. Settings and sync diagnostics persist in SQLite across backend restarts.
 
-The Settings dialog includes Codex CLI, Gemini, OpenRouter, DeepSeek, and custom provider presets. The Codex CLI preset runs `codex exec` with `gpt-5.4-mini` and parses the plain final message because the CLI provider path does not rely on response schemas. Codex CLI sync runs are invoked with ephemeral execution and an internal skip marker so parser runs do not get re-imported as new Codex threads.
+The Settings dialog includes Codex CLI, Gemini, OpenRouter, DeepSeek, and custom provider presets, plus output language choices for English, Traditional Chinese, Simplified Chinese, Japanese, Spanish, French, or a custom language. The Codex CLI preset runs `codex exec` with `gpt-5.4-mini` and parses the plain final message because the CLI provider path does not rely on response schemas. Codex CLI sync runs are invoked with ephemeral execution and an internal skip marker so parser runs do not get re-imported as new Codex threads.
 
 ## API Surface
 

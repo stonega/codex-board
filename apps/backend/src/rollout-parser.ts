@@ -27,6 +27,8 @@ import {
   shouldNeedsReview,
 } from '../../../packages/domain/src/index';
 
+import { normalizeParseOutputLanguage } from './config';
+
 export interface RolloutFile {
   path: string;
   mtimeMs: number;
@@ -1233,8 +1235,9 @@ Quality bar:
 function buildAiParseUserPrompt(
   payload: ParsePayload,
   candidate: ThreadCandidate,
+  outputLanguage: string,
 ): string {
-  return `Thread metadata:\nrepository=${candidate.git.repository}\nbranch=${candidate.git.branch ?? 'unknown'}\ncommits=${candidate.git.commits.map((commit) => commit.sha).join(', ') || 'none'}\ntags=${candidate.git.tags.join(', ') || 'none'}\nimages=${candidate.images.length}\n\nThread content:\n${payload.content}`;
+  return `Output language:\n- Write title, summary, tags, and warnings in ${outputLanguage}.\n- Keep JSON object keys exactly as title, summary, tags, warnings.\n\nThread metadata:\nrepository=${candidate.git.repository}\nbranch=${candidate.git.branch ?? 'unknown'}\ncommits=${candidate.git.commits.map((commit) => commit.sha).join(', ') || 'none'}\ntags=${candidate.git.tags.join(', ') || 'none'}\nimages=${candidate.images.length}\n\nThread content:\n${payload.content}`;
 }
 
 function extractJsonObjectFromText(content: string): string {
@@ -1321,6 +1324,7 @@ async function parseWithAi(
     baseUrl: string;
     apiKey: string;
     model: string;
+    outputLanguage: string;
   },
 ): Promise<{
   result: AiParseResult;
@@ -1338,7 +1342,11 @@ async function parseWithAi(
       },
       {
         role: 'user',
-        content: buildAiParseUserPrompt(payload, candidate),
+        content: buildAiParseUserPrompt(
+          payload,
+          candidate,
+          options.outputLanguage,
+        ),
       },
     ],
   };
@@ -1398,6 +1406,7 @@ async function parseWithCodexCli(
   candidate: ThreadCandidate,
   options: {
     model: string;
+    outputLanguage: string;
   },
 ): Promise<{
   result: AiParseResult;
@@ -1415,7 +1424,7 @@ Codex CLI execution rules:
 - Return the JSON object as the final answer only.
 - Do not wrap the JSON in Markdown.
 
-${buildAiParseUserPrompt(payload, candidate)}`;
+${buildAiParseUserPrompt(payload, candidate, options.outputLanguage)}`;
 
   const codexCliBin = process.env.CODEX_BOARDS_CODEX_CLI_BIN ?? 'codex';
   console.log(
@@ -1431,8 +1440,6 @@ ${buildAiParseUserPrompt(payload, candidate)}`;
         options.model,
         '--sandbox',
         'read-only',
-        '--ask-for-approval',
-        'never',
         '--skip-git-repo-check',
         '--ephemeral',
         '--color',
@@ -1492,6 +1499,7 @@ export async function buildIssuesFromCandidate(
     openAiBaseUrl: string | null;
     openAiApiKey: string | null;
     openAiModel: string | null;
+    outputLanguage?: string | null;
   },
 ): Promise<{
   project: ProjectSummary;
@@ -1517,6 +1525,7 @@ export async function buildIssuesFromCandidate(
   };
   const payload = buildParsePayload(candidate);
   const parserProvider = options.parserProvider ?? 'openai-compatible';
+  const outputLanguage = normalizeParseOutputLanguage(options.outputLanguage);
   const canUseOpenAiCompatible = Boolean(
     parserProvider === 'openai-compatible' &&
       options.openAiBaseUrl &&
@@ -1536,11 +1545,15 @@ export async function buildIssuesFromCandidate(
 
       const ai =
         parserProvider === 'codex-cli'
-          ? await parseWithCodexCli(payload, candidate, { model })
+          ? await parseWithCodexCli(payload, candidate, {
+              model,
+              outputLanguage,
+            })
           : await parseWithAi(payload, candidate, {
               baseUrl: options.openAiBaseUrl ?? '',
               apiKey: options.openAiApiKey ?? '',
               model,
+              outputLanguage,
             });
 
       const issue = buildIssue({

@@ -121,10 +121,61 @@ type ParserSettingsForm = {
   model: string;
   apiKey: string;
   apiKeyConfigured: boolean;
+  outputLanguage: string;
 };
+
+type ParserSettingsField = 'baseUrl' | 'model' | 'apiKey' | 'outputLanguage';
+export type OnboardingDisplayStep = 'provider' | 'language' | 'sync';
+
+const DEFAULT_OUTPUT_LANGUAGE = 'English';
+const PARSER_OUTPUT_LANGUAGE_OPTIONS = [
+  'English',
+  'Traditional Chinese',
+  'Simplified Chinese',
+  'Japanese',
+  'Spanish',
+  'French',
+] as const;
 
 const SIDEBAR_EXPANDED_WIDTH = 240;
 const SIDEBAR_COLLAPSED_WIDTH = 64;
+
+function isPresetOutputLanguage(value: string): boolean {
+  return PARSER_OUTPUT_LANGUAGE_OPTIONS.some((language) => language === value);
+}
+
+function normalizeOutputLanguage(value: string | null | undefined): string {
+  const normalized = value?.trim();
+  return normalized ? normalized : DEFAULT_OUTPUT_LANGUAGE;
+}
+
+function createParserSettingsForm(
+  parser?: SettingsResponse['parser'] | null,
+): ParserSettingsForm {
+  const provider = parser?.provider ?? 'codex-cli';
+
+  return {
+    provider,
+    baseUrl: parser?.baseUrl ?? '',
+    model:
+      parser?.model ??
+      (provider === 'codex-cli' ? PARSER_PRESETS.codexCli.model : ''),
+    apiKey: '',
+    apiKeyConfigured: parser?.apiKeyConfigured ?? false,
+    outputLanguage: normalizeOutputLanguage(parser?.outputLanguage),
+  };
+}
+
+export function getOnboardingDisplayStep(
+  parserReady: boolean,
+  languageConfirmed: boolean,
+): OnboardingDisplayStep {
+  if (!parserReady) {
+    return 'provider';
+  }
+
+  return languageConfirmed ? 'sync' : 'language';
+}
 
 function formatLabel(value: string): string {
   return value
@@ -877,6 +928,58 @@ function ProviderPresetButtons({
   );
 }
 
+function OutputLanguageControl({
+  idPrefix,
+  form,
+  onChange,
+}: {
+  idPrefix: string;
+  form: ParserSettingsForm;
+  onChange: (field: ParserSettingsField, value: string) => void;
+}) {
+  const selectValue = isPresetOutputLanguage(form.outputLanguage)
+    ? form.outputLanguage
+    : 'custom';
+
+  return (
+    <div className="grid gap-2">
+      <label
+        className="text-[0.75rem] font-semibold text-notion-muted uppercase tracking-wider"
+        htmlFor={`${idPrefix}-outputLanguage`}
+      >
+        Output language
+      </label>
+      <Select
+        id={`${idPrefix}-outputLanguage`}
+        onChange={(event) =>
+          onChange(
+            'outputLanguage',
+            event.target.value === 'custom' ? '' : event.target.value,
+          )
+        }
+        value={selectValue}
+        className="w-full bg-notion-sidebar border border-notion-border focus:bg-white focus:border-notion-blue transition-all"
+      >
+        {PARSER_OUTPUT_LANGUAGE_OPTIONS.map((language) => (
+          <option key={language} value={language}>
+            {language}
+          </option>
+        ))}
+        <option value="custom">Custom</option>
+      </Select>
+      {selectValue === 'custom' ? (
+        <Input
+          id={`${idPrefix}-customOutputLanguage`}
+          onChange={(event) => onChange('outputLanguage', event.target.value)}
+          placeholder="Korean, Brazilian Portuguese, ..."
+          value={form.outputLanguage}
+          className="w-full bg-notion-sidebar border border-notion-border focus:bg-white focus:border-notion-blue transition-all"
+        />
+      ) : null}
+    </div>
+  );
+}
+
 function SyncStatusPill({
   status,
   fallbackSync,
@@ -916,31 +1019,29 @@ function SyncStatusPill({
 
 function OnboardingScreen({
   form,
-  parserReady,
+  step,
   saving,
   error,
   syncStatus,
   syncError,
   syncActive,
-  limitSyncToLatest100,
   onChange,
   onApplyPreset,
-  onLimitSyncToLatest100Change,
+  onSaveLanguage,
   onSaveProvider,
   onRunSync,
 }: {
   form: ParserSettingsForm;
-  parserReady: boolean;
+  step: OnboardingDisplayStep;
   saving: boolean;
   error: string | null;
   syncStatus: SyncStatus | null;
   syncError: string | null;
   syncActive: boolean;
-  limitSyncToLatest100: boolean;
-  onChange: (field: 'baseUrl' | 'model' | 'apiKey', value: string) => void;
+  onChange: (field: ParserSettingsField, value: string) => void;
   onApplyPreset: (preset: keyof typeof PARSER_PRESETS) => void;
-  onLimitSyncToLatest100Change: (value: boolean) => void;
-  onSaveProvider: () => Promise<void>;
+  onSaveLanguage: () => Promise<boolean>;
+  onSaveProvider: () => Promise<boolean>;
   onRunSync: () => Promise<void>;
 }) {
   const progress = syncStatus?.progress;
@@ -952,7 +1053,20 @@ function OnboardingScreen({
       : syncActive
         ? 12
         : 0;
-  const providerStepActive = !parserReady;
+  const providerStepActive = step === 'provider';
+  const languageStepActive = step === 'language';
+  const syncStepActive = step === 'sync';
+  const stepStateClass = (active: boolean, completed: boolean) => {
+    if (active) {
+      return 'border-notion-blue bg-blue-50 text-blue-800';
+    }
+
+    if (completed) {
+      return 'border-emerald-100 bg-emerald-50 text-emerald-700';
+    }
+
+    return 'border-notion-border bg-notion-sidebar text-notion-muted';
+  };
   const providerUsesApiKey = form.provider === 'openai-compatible';
   const providerCanContinue = providerUsesApiKey
     ? Boolean(
@@ -984,7 +1098,7 @@ function OnboardingScreen({
         <div className="grid gap-3 md:grid-cols-[220px_minmax(0,1fr)]">
           <aside className="grid content-start gap-2 text-sm">
             <div
-              className={`rounded-md border p-3 ${providerStepActive ? 'border-notion-blue bg-blue-50 text-blue-800' : 'border-emerald-100 bg-emerald-50 text-emerald-700'}`}
+              className={`rounded-md border p-3 ${stepStateClass(providerStepActive, !providerStepActive)}`}
             >
               <p className="font-semibold">1. Provider</p>
               <p className="mt-1 text-[0.81rem] opacity-80">
@@ -992,9 +1106,17 @@ function OnboardingScreen({
               </p>
             </div>
             <div
-              className={`rounded-md border p-3 ${providerStepActive ? 'border-notion-border bg-notion-sidebar text-notion-muted' : 'border-notion-blue bg-blue-50 text-blue-800'}`}
+              className={`rounded-md border p-3 ${stepStateClass(languageStepActive, syncStepActive)}`}
             >
-              <p className="font-semibold">2. Sync</p>
+              <p className="font-semibold">2. Language</p>
+              <p className="mt-1 text-[0.81rem] opacity-80">
+                Choose parse output language.
+              </p>
+            </div>
+            <div
+              className={`rounded-md border p-3 ${stepStateClass(syncStepActive, false)}`}
+            >
+              <p className="font-semibold">3. Sync</p>
               <p className="mt-1 text-[0.81rem] opacity-80">
                 Import local Codex rollout history.
               </p>
@@ -1103,6 +1225,40 @@ function OnboardingScreen({
                   </Button>
                 </div>
               </div>
+            ) : languageStepActive ? (
+              <div className="grid gap-5">
+                <div>
+                  <h2 className="text-lg font-semibold tracking-tight">
+                    Choose output language
+                  </h2>
+                  <p className="mt-1 text-sm text-notion-muted">
+                    Parsed issue titles, summaries, tags, and warnings will use
+                    this language while JSON keys stay stable.
+                  </p>
+                </div>
+
+                <OutputLanguageControl
+                  form={form}
+                  idPrefix="onboarding-language"
+                  onChange={onChange}
+                />
+
+                {error ? (
+                  <p className="rounded border border-red-100 bg-red-50 p-3 text-sm text-red-800">
+                    {error}
+                  </p>
+                ) : null}
+
+                <div className="flex justify-end border-t border-notion-border pt-4">
+                  <Button
+                    disabled={saving}
+                    onClick={() => void onSaveLanguage()}
+                    className="bg-notion-blue px-4 text-white hover:bg-blue-600"
+                  >
+                    {saving ? 'Saving...' : 'Continue'}
+                  </Button>
+                </div>
+              </div>
             ) : (
               <div className="grid gap-5">
                 <div>
@@ -1113,26 +1269,6 @@ function OnboardingScreen({
                     Codex Boards is importing local session history.
                   </p>
                 </div>
-
-                <label className="flex items-start gap-3 rounded border border-notion-border bg-notion-sidebar p-3 text-sm">
-                  <input
-                    checked={limitSyncToLatest100}
-                    className="mt-0.5 h-4 w-4 accent-notion-blue"
-                    disabled={syncActive}
-                    onChange={(event) =>
-                      onLimitSyncToLatest100Change(event.target.checked)
-                    }
-                    type="checkbox"
-                  />
-                  <span className="grid gap-0.5">
-                    <span className="font-medium text-notion-text">
-                      Only sync latest 100 threads for first sync
-                    </span>
-                    <span className="text-[0.81rem] text-notion-muted">
-                      Later syncs will scan all local rollout files.
-                    </span>
-                  </span>
-                </label>
 
                 <div className="grid gap-3">
                   <div className="h-2 overflow-hidden rounded-full bg-notion-active">
@@ -1205,8 +1341,8 @@ function SettingsModal({
   saving: boolean;
   error: string | null;
   onClose: () => void;
-  onSave: () => Promise<void>;
-  onChange: (field: 'baseUrl' | 'model' | 'apiKey', value: string) => void;
+  onSave: () => Promise<boolean>;
+  onChange: (field: ParserSettingsField, value: string) => void;
   onApplyPreset: (preset: keyof typeof PARSER_PRESETS) => void;
 }) {
   const [activeSection, setActiveSection] = useState<'parser' | 'history'>(
@@ -1350,6 +1486,12 @@ function SettingsModal({
                       className="w-full bg-notion-sidebar border border-notion-border focus:bg-white focus:border-notion-blue transition-all"
                     />
                   </div>
+
+                  <OutputLanguageControl
+                    form={form}
+                    idPrefix="settings"
+                    onChange={onChange}
+                  />
 
                   {providerUsesApiKey ? (
                     <div className="grid gap-1.5">
@@ -1527,21 +1669,17 @@ function BoardPage() {
   >(null);
   const [runningSync, setRunningSync] = useState(false);
   const [syncRefreshToken, setSyncRefreshToken] = useState(0);
-  const [limitOnboardingSyncToLatest100, setLimitOnboardingSyncToLatest100] =
-    useState(false);
   const [exportingMultica, setExportingMultica] = useState(false);
   const [exportMessage, setExportMessage] = useState<string | null>(null);
   const [filters, setFilters] = useState<IssueFilters>({
     parseMode: 'all',
     query: '',
   });
-  const [settingsForm, setSettingsForm] = useState({
-    provider: 'openai-compatible' as ParserProvider,
-    baseUrl: '',
-    model: '',
-    apiKey: '',
-    apiKeyConfigured: false,
-  });
+  const [settingsForm, setSettingsForm] = useState<ParserSettingsForm>(() =>
+    createParserSettingsForm(),
+  );
+  const [onboardingLanguageConfirmed, setOnboardingLanguageConfirmed] =
+    useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -1563,13 +1701,7 @@ function BoardPage() {
         setSavedViewsResponse(views);
         setSettingsResponse(settings);
         setSyncStatus(status.status);
-        setSettingsForm({
-          provider: settings.parser.provider,
-          baseUrl: settings.parser.baseUrl ?? '',
-          model: settings.parser.model ?? '',
-          apiKey: '',
-          apiKeyConfigured: settings.parser.apiKeyConfigured,
-        });
+        setSettingsForm(createParserSettingsForm(settings.parser));
         setSelectedProjectId(
           (current) => current ?? projects.projects[0]?.id ?? null,
         );
@@ -1792,14 +1924,7 @@ function BoardPage() {
         setProjectsResponse(projects);
         setSettingsResponse(settings);
         setSyncStatus(status.status);
-        setSettingsForm((current) => ({
-          ...current,
-          provider: settings.parser.provider,
-          baseUrl: settings.parser.baseUrl ?? '',
-          model: settings.parser.model ?? '',
-          apiKey: '',
-          apiKeyConfigured: settings.parser.apiKeyConfigured,
-        }));
+        setSettingsForm(createParserSettingsForm(settings.parser));
         setSelectedProjectId((current) => {
           if (
             current &&
@@ -2093,14 +2218,7 @@ function BoardPage() {
         });
         setSettingsResponse(settings);
         setSyncStatus(response.status ?? status.status);
-        setSettingsForm((current) => ({
-          ...current,
-          provider: settings.parser.provider,
-          baseUrl: settings.parser.baseUrl ?? '',
-          model: settings.parser.model ?? '',
-          apiKey: '',
-          apiKeyConfigured: settings.parser.apiKeyConfigured,
-        }));
+        setSettingsForm(createParserSettingsForm(settings.parser));
         if (!selectedProjectId) {
           setSelectedProjectId(projects.projects[0]?.id ?? null);
         }
@@ -2153,13 +2271,7 @@ function BoardPage() {
     try {
       const settings = await fetchJson<SettingsResponse>('/settings');
       setSettingsResponse(settings);
-      setSettingsForm({
-        provider: settings.parser.provider,
-        baseUrl: settings.parser.baseUrl ?? '',
-        model: settings.parser.model ?? '',
-        apiKey: '',
-        apiKeyConfigured: settings.parser.apiKeyConfigured,
-      });
+      setSettingsForm(createParserSettingsForm(settings.parser));
     } catch (loadError) {
       setSettingsError(
         loadError instanceof Error ? loadError.message : 'Unknown error',
@@ -2169,7 +2281,9 @@ function BoardPage() {
     }
   }
 
-  async function saveSettings(options: { closeSettings?: boolean } = {}) {
+  async function saveSettings(
+    options: { closeSettings?: boolean } = {},
+  ): Promise<boolean> {
     setSavingSettings(true);
     setSettingsError(null);
 
@@ -2179,6 +2293,7 @@ function BoardPage() {
         baseUrl:
           settingsForm.provider === 'codex-cli' ? null : settingsForm.baseUrl,
         model: settingsForm.model,
+        outputLanguage: settingsForm.outputLanguage,
       },
     };
 
@@ -2191,20 +2306,16 @@ function BoardPage() {
     try {
       const settings = await postJson<SettingsResponse>('/settings', payload);
       setSettingsResponse(settings);
-      setSettingsForm({
-        provider: settings.parser.provider,
-        baseUrl: settings.parser.baseUrl ?? '',
-        model: settings.parser.model ?? '',
-        apiKey: '',
-        apiKeyConfigured: settings.parser.apiKeyConfigured,
-      });
+      setSettingsForm(createParserSettingsForm(settings.parser));
       if (options.closeSettings !== false) {
         setSettingsOpen(false);
       }
+      return true;
     } catch (saveError) {
       setSettingsError(
         saveError instanceof Error ? saveError.message : 'Unknown error',
       );
+      return false;
     } finally {
       setSavingSettings(false);
     }
@@ -2212,6 +2323,10 @@ function BoardPage() {
 
   const parserReady = isParserSettingsReady(settingsResponse?.parser);
   const syncActive = runningSync || syncStatus?.state === 'syncing';
+  const onboardingDisplayStep = getOnboardingDisplayStep(
+    parserReady,
+    onboardingLanguageConfirmed,
+  );
 
   function applyParserPreset(preset: keyof typeof PARSER_PRESETS) {
     const next = PARSER_PRESETS[preset];
@@ -2273,21 +2388,23 @@ function BoardPage() {
       <OnboardingScreen
         error={settingsError}
         form={settingsForm}
-        limitSyncToLatest100={limitOnboardingSyncToLatest100}
         onApplyPreset={applyParserPreset}
         onChange={(field, value) =>
           setSettingsForm((current) => ({ ...current, [field]: value }))
         }
-        onLimitSyncToLatest100Change={setLimitOnboardingSyncToLatest100}
-        onRunSync={() =>
-          runSync(
-            'onboarding',
-            limitOnboardingSyncToLatest100 ? { maxThreads: 100 } : {},
-          )
-        }
+        onRunSync={async () => {
+          await runSync('onboarding');
+        }}
+        onSaveLanguage={async () => {
+          const saved = await saveSettings({ closeSettings: false });
+          if (saved) {
+            setOnboardingLanguageConfirmed(true);
+          }
+          return saved;
+        }}
         onSaveProvider={() => saveSettings({ closeSettings: false })}
-        parserReady={parserReady}
         saving={savingSettings}
+        step={onboardingDisplayStep}
         syncActive={syncActive}
         syncError={error ?? syncStatus?.latestError ?? null}
         syncStatus={syncStatus}

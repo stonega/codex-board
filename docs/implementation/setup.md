@@ -21,7 +21,8 @@ bun run codex-board
 
 The `codex-board` CLI starts the backend API and Vite web app locally, waits
 for both to become reachable, then opens the web UI. On first open, the UI
-shows provider setup, then a sync progress screen, then enters the board. Use
+shows provider setup with Codex CLI selected by default, shows parse output
+language as its own second step, then shows sync progress and enters the board. Use
 `--no-open` when you want to start the servers without launching a browser.
 From the repository script, pass CLI flags after `--`; for example:
 
@@ -72,13 +73,14 @@ export CODEX_BOARDS_PARSER_PROVIDER=openai-compatible
 export OPENAI_COMPAT_BASE_URL=http://localhost:11434/v1
 export OPENAI_COMPAT_API_KEY=placeholder
 export OPENAI_COMPAT_MODEL=qwen2.5-coder:7b
+export CODEX_BOARDS_PARSE_OUTPUT_LANGUAGE=English
 ```
 
 For Codex CLI parsing, set `CODEX_BOARDS_PARSER_PROVIDER=codex-cli`; the
 default model is `gpt-5.4-mini`. Set `CODEX_BOARDS_CODEX_CLI_BIN` only when the
 backend should call a non-default `codex` executable path.
 
-You can also inspect and update the runtime parser settings from the web app's Settings dialog. The dialog includes Codex CLI, Gemini, OpenRouter, DeepSeek, and custom provider presets. The Codex CLI preset runs `codex exec` with `gpt-5.4-mini` and parses the plain final message because this path does not use response schemas. Codex CLI sync runs use ephemeral execution and an internal skip marker so parser runs do not get re-imported as new Codex threads. The dialog updates the backend parser target, shows recent sync history, and persists both parser settings and sync diagnostics in SQLite for subsequent sync runs and backend restarts.
+You can also inspect and update the runtime parser settings from the web app's Settings dialog. The dialog includes Codex CLI, Gemini, OpenRouter, DeepSeek, and custom provider presets, plus output language choices for English, Traditional Chinese, Simplified Chinese, Japanese, Spanish, French, or a custom language. The Codex CLI preset runs `codex exec` with `gpt-5.4-mini` and parses the plain final message because this path does not use response schemas. Codex CLI sync runs use ephemeral execution and an internal skip marker so parser runs do not get re-imported as new Codex threads. The dialog updates the backend parser target and output language, shows recent sync history, and persists both parser settings and sync diagnostics in SQLite for subsequent sync runs and backend restarts.
 
 ## Initial implementation choices
 
@@ -95,7 +97,7 @@ You can also inspect and update the runtime parser settings from the web app's S
 - The backend scans `~/.codex/sessions` when sync is requested or scheduled
 - Only Git-backed threads are imported
 - Parsed issues are stored in SQLite under `.tmp/codex-boards.sqlite` by default
-- First-run onboarding requires parser provider setup, lets the user optionally limit the initial import to the latest 100 threads, runs the first sync, then enters the board
+- First-run onboarding requires parser provider setup, shows a dedicated parse output language step, runs the first sync, then enters the board
 - Manual sync runs incrementally: new, changed, removed, or parser-fingerprint-changed rollout files are processed; unchanged files are skipped
 - The `POST /api/sync` `maxThreads` option is only honored before the first completed sync; later manual syncs scan all rollout files
 - After the first completed sync, the backend schedules background sync every minute by default and only queues newly added or file-updated rollout threads; set `CODEX_BOARDS_SYNC_INTERVAL_MS=0` to disable it

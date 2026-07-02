@@ -423,6 +423,7 @@ export class BoardsDatabase {
     baseUrl: string | null;
     model: string | null;
     apiKey: string | null;
+    outputLanguage?: string | null;
   } | null {
     const row = this.db
       .query(
@@ -439,6 +440,7 @@ export class BoardsDatabase {
       baseUrl: string | null;
       model: string | null;
       apiKey: string | null;
+      outputLanguage?: string | null;
     }>(row.valueJson);
   }
 
@@ -447,6 +449,7 @@ export class BoardsDatabase {
     baseUrl: string | null;
     model: string | null;
     apiKey: string | null;
+    outputLanguage: string;
   }): void {
     this.db
       .query(

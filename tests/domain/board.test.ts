@@ -62,12 +62,14 @@ describe('parser settings', () => {
         baseUrl: '  http://localhost:11434/v1  ',
         model: '  qwen2.5-coder:7b ',
         apiKey: '  secret-token ',
+        outputLanguage: ' Traditional Chinese ',
       }),
     ).toEqual({
       provider: 'openai-compatible',
       baseUrl: 'http://localhost:11434/v1',
       model: 'qwen2.5-coder:7b',
       apiKeyConfigured: true,
+      outputLanguage: 'Traditional Chinese',
     });
 
     expect(
@@ -79,6 +81,7 @@ describe('parser settings', () => {
       baseUrl: 'http://localhost:11434/v1',
       model: null,
       apiKeyConfigured: true,
+      outputLanguage: 'Traditional Chinese',
     });
 
     expect(readParserSettings(config)).toEqual({
@@ -86,6 +89,7 @@ describe('parser settings', () => {
       baseUrl: 'http://localhost:11434/v1',
       model: null,
       apiKeyConfigured: true,
+      outputLanguage: 'Traditional Chinese',
     });
   });
 
@@ -111,6 +115,7 @@ describe('parser settings', () => {
       baseUrl: null,
       model: 'gpt-5.4-mini',
       apiKeyConfigured: false,
+      outputLanguage: 'English',
     });
 
     expect(config.openAiBaseUrl).toBeNull();
@@ -139,6 +144,7 @@ describe('parser settings', () => {
           baseUrl: 'http://localhost:11434/v1',
           model: 'qwen2.5-coder:7b',
           apiKeyConfigured: true,
+          outputLanguage: 'English',
         },
       });
 
@@ -151,6 +157,7 @@ describe('parser settings', () => {
           parser: {
             baseUrl: ' http://localhost:8000/v1 ',
             model: ' llama3.1:8b ',
+            outputLanguage: ' Japanese ',
           },
         }),
       });
@@ -161,12 +168,14 @@ describe('parser settings', () => {
           baseUrl: 'http://localhost:8000/v1',
           model: 'llama3.1:8b',
           apiKeyConfigured: true,
+          outputLanguage: 'Japanese',
         },
       });
 
       expect(server.config.openAiBaseUrl).toBe('http://localhost:8000/v1');
       expect(server.config.openAiModel).toBe('llama3.1:8b');
       expect(server.config.openAiApiKey).toBe('initial-key');
+      expect(server.config.parseOutputLanguage).toBe('Japanese');
     } finally {
       server.close();
       rmSync(root, { force: true, recursive: true });
@@ -199,6 +208,7 @@ describe('parser settings', () => {
             baseUrl: ' http://localhost:9000/v1 ',
             model: ' gpt-4.1-mini ',
             apiKey: ' persisted-key ',
+            outputLanguage: ' Brazilian Portuguese ',
           },
         }),
       });
@@ -225,6 +235,7 @@ describe('parser settings', () => {
           baseUrl: 'http://localhost:9000/v1',
           model: 'gpt-4.1-mini',
           apiKeyConfigured: true,
+          outputLanguage: 'Brazilian Portuguese',
         },
       });
 
@@ -233,6 +244,9 @@ describe('parser settings', () => {
       );
       expect(restartedServer.config.openAiModel).toBe('gpt-4.1-mini');
       expect(restartedServer.config.openAiApiKey).toBe('persisted-key');
+      expect(restartedServer.config.parseOutputLanguage).toBe(
+        'Brazilian Portuguese',
+      );
     } finally {
       restartedServer.close();
       rmSync(root, { force: true, recursive: true });
@@ -257,6 +271,13 @@ describe('parser settings', () => {
       const settingsResponse = await server.app.request('/api/settings');
       expect(settingsResponse.status).toBe(200);
       expect(await settingsResponse.json()).toMatchObject({
+        parser: {
+          provider: 'codex-cli',
+          baseUrl: null,
+          model: null,
+          apiKeyConfigured: false,
+          outputLanguage: 'English',
+        },
         onboarding: {
           required: true,
           step: 'provider',
@@ -351,6 +372,7 @@ describe('parser settings', () => {
             baseUrl: ' https://api.deepseek.com ',
             model: ' deepseek-v4-flash ',
             apiKey: ' test-key ',
+            outputLanguage: ' Simplified Chinese ',
           },
         }),
       });
@@ -361,6 +383,7 @@ describe('parser settings', () => {
           baseUrl: 'https://api.deepseek.com',
           model: 'deepseek-v4-flash',
           apiKeyConfigured: true,
+          outputLanguage: 'Simplified Chinese',
         },
         onboarding: {
           required: true,
@@ -399,6 +422,7 @@ describe('parser settings', () => {
           parser: {
             provider: 'codex-cli',
             model: ' gpt-5.4-mini ',
+            outputLanguage: ' French ',
           },
         }),
       });
@@ -410,6 +434,7 @@ describe('parser settings', () => {
           baseUrl: null,
           model: 'gpt-5.4-mini',
           apiKeyConfigured: false,
+          outputLanguage: 'French',
         },
         onboarding: {
           required: true,
@@ -487,7 +512,7 @@ describe('parser settings', () => {
       expect(await response.json()).toMatchObject({
         ok: true,
         sync: {
-          parserBaseUrl: null,
+          parserBaseUrl: 'codex-cli',
           parserModel: null,
           responseModels: [],
           aiRequestCount: 0,
@@ -513,7 +538,7 @@ describe('parser settings', () => {
       });
 
       const latestSync = server.database.getLatestSync();
-      expect(latestSync?.parserBaseUrl).toBeNull();
+      expect(latestSync?.parserBaseUrl).toBe('codex-cli');
       expect(latestSync?.parserModel).toBeNull();
       expect(latestSync?.responseModels).toEqual([]);
       expect(latestSync?.aiRequestCount).toBe(0);
@@ -837,8 +862,10 @@ describe('parser settings', () => {
     );
 
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = async () =>
-      new Response(
+    let requestBody = '';
+    globalThis.fetch = async (_input, init) => {
+      requestBody = String(init?.body ?? '');
+      return new Response(
         JSON.stringify({
           model: 'gpt-4.1-mini-2026-04-01',
           usage: {
@@ -866,6 +893,7 @@ describe('parser settings', () => {
           },
         },
       );
+    };
 
     const server = createAppServer({
       port: 7788,
@@ -874,6 +902,7 @@ describe('parser settings', () => {
       openAiBaseUrl: 'http://localhost:11434/v1',
       openAiApiKey: 'test-key',
       openAiModel: 'gpt-4.1-mini',
+      parseOutputLanguage: 'Traditional Chinese',
     });
 
     try {
@@ -899,6 +928,9 @@ describe('parser settings', () => {
           aiParsedIssues: 1,
         },
       });
+      expect(requestBody).toContain(
+        'Write title, summary, tags, and warnings in Traditional Chinese.',
+      );
 
       const settingsResponse = await server.app.request('/api/settings');
       expect(settingsResponse.status).toBe(200);
@@ -907,6 +939,7 @@ describe('parser settings', () => {
           baseUrl: 'http://localhost:11434/v1',
           model: 'gpt-4.1-mini',
           apiKeyConfigured: true,
+          outputLanguage: 'Traditional Chinese',
         },
         sync: {
           parserBaseUrl: 'http://localhost:11434/v1',
@@ -983,6 +1016,9 @@ case "$args" in
   *"--output-schema"*) exit 42 ;;
 esac
 case "$args" in
+  *"--ask-for-approval"*) exit 45 ;;
+esac
+case "$args" in
   *"--ephemeral"*) ;;
   *) exit 43 ;;
 esac
@@ -1019,6 +1055,7 @@ JSON
       openAiBaseUrl: null,
       openAiApiKey: null,
       openAiModel: 'gpt-5.4-mini',
+      parseOutputLanguage: 'Simplified Chinese',
     });
 
     try {
@@ -1047,8 +1084,11 @@ JSON
       expect(args).toContain('exec -m gpt-5.4-mini');
       expect(args).toContain('--ephemeral');
       expect(args).not.toContain('--output-schema');
-      expect(readFileSync(fakeStdinPath, 'utf8')).toContain(
-        'CODEX_BOARDS_SYNC_PARSER_RUN_DO_NOT_IMPORT',
+      expect(args).not.toContain('--ask-for-approval');
+      const stdin = readFileSync(fakeStdinPath, 'utf8');
+      expect(stdin).toContain('CODEX_BOARDS_SYNC_PARSER_RUN_DO_NOT_IMPORT');
+      expect(stdin).toContain(
+        'Write title, summary, tags, and warnings in Simplified Chinese.',
       );
 
       const issuesResponse = await server.app.request(
@@ -1252,6 +1292,76 @@ JSON
         rolloutStats.mtimeMs,
         rolloutStats.size,
         'fallback-only',
+        'thread-abc',
+        new Date().toISOString(),
+      );
+
+      const syncResponse = await server.app.request('/api/sync', {
+        method: 'POST',
+      });
+
+      expect(syncResponse.status).toBe(200);
+      expect(await syncResponse.json()).toMatchObject({
+        sync: {
+          scannedFiles: 1,
+          changedFiles: 1,
+          importedThreads: 1,
+          skippedThreads: 0,
+          parseLog: [
+            {
+              status: 'imported',
+              threadId: 'thread-abc',
+            },
+          ],
+        },
+      });
+    } finally {
+      server.close();
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test('reparses files imported with the prior codex cli parser fingerprint', async () => {
+    const root = `/tmp/codex-boards-parser-version-codex-${Date.now()}`;
+    const sessionsRoot = join(root, 'sessions');
+    const rolloutPath = join(
+      sessionsRoot,
+      '2026',
+      '04',
+      '06',
+      'rollout-sample.jsonl',
+    );
+    const gitWorkspace = '/tmp/codex-boards-fixture';
+    mkdirSync(join(sessionsRoot, '2026', '04', '06'), { recursive: true });
+    mkdirSync(join(gitWorkspace, '.git'), { recursive: true });
+
+    writeFileSync(
+      rolloutPath,
+      readFileSync(
+        join(process.cwd(), 'tests/fixtures/rollout-sample.jsonl'),
+        'utf8',
+      ).replaceAll('/tmp/codex-boards-fixture', gitWorkspace),
+    );
+
+    const server = createAppServer({
+      port: 7788,
+      sessionsRoot,
+      databasePath: join(root, 'boards.sqlite'),
+      parserProvider: 'codex-cli',
+      openAiBaseUrl: null,
+      openAiApiKey: null,
+      openAiModel: null,
+      parseOutputLanguage: 'Simplified Chinese',
+      syncIntervalMs: 0,
+    });
+
+    try {
+      const rolloutStats = statSync(rolloutPath);
+      server.database.saveSyncFile(
+        rolloutPath,
+        rolloutStats.mtimeMs,
+        rolloutStats.size,
+        'codex-cli:gpt-5.4-mini:plain-json:thread-issue-v2:language=Simplified Chinese',
         'thread-abc',
         new Date().toISOString(),
       );

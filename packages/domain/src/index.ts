@@ -405,6 +405,7 @@ export interface ParserSettings {
   baseUrl: string | null;
   model: string | null;
   apiKeyConfigured: boolean;
+  outputLanguage: string;
 }
 
 export interface OnboardingState {
@@ -444,6 +445,7 @@ export interface UpdateSettingsPayload {
     baseUrl?: string | null;
     model?: string | null;
     apiKey?: string | null;
+    outputLanguage?: string | null;
   };
 }
 

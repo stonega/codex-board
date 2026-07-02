@@ -4,14 +4,15 @@
 
 The current workflow is:
 
-1. Configure an OpenAI-compatible parser provider on first open
-2. Run the first sync from the onboarding sync screen
-3. Scan rollout files under `~/.codex/sessions`
-4. Keep only threads with Git workspace evidence
-5. Truncate thread content to a cheap parse payload
-6. Extract one issue per thread and collect image references
-7. Persist issues, image evidence, Git evidence, and sync diagnostics in SQLite
-8. Browse them in a Notion-style web/desktop workspace or a native GNOME workspace with projects, filters, saved views, and issue details
+1. Configure the parser provider on first open; Codex CLI is selected by default
+2. Choose the parse output language on a dedicated second setup step
+3. Run the first sync from the onboarding sync screen
+4. Scan rollout files under `~/.codex/sessions`
+5. Keep only threads with Git workspace evidence
+6. Truncate thread content to a cheap parse payload
+7. Extract one issue per thread and collect image references
+8. Persist issues, image evidence, Git evidence, and sync diagnostics in SQLite
+9. Browse them in a Notion-style web/desktop workspace or a native GNOME workspace with projects, filters, saved views, and issue details
 
 The UI emphasizes reviewability:
 
@@ -23,7 +24,7 @@ The UI emphasizes reviewability:
 - the homepage shows live sync status and the next scheduled background sync
 - saved views can pin review queues or Git-heavy work
 - the Usage page shows selected-interval token, fee, cache, thread, and index cards with all-device totals, plus charts for daily aggregate token history, cached input, uncached input, reasoning output, and newly started threads
-- the Settings dialog exposes the active parser base URL, model, API key status, Gemini/OpenRouter/DeepSeek presets, and those settings persist across backend restarts
+- the Settings dialog exposes the active parser provider, model, API key status, output language, Codex CLI/Gemini/OpenRouter/DeepSeek presets, and those settings persist across backend restarts
 
 After the first completed sync, the backend checks for rollout changes in the background once per minute. Unchanged files are skipped; changed files and parser setting changes are reparsed.
 

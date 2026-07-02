@@ -8,7 +8,7 @@ import type {
   SyncTrigger,
 } from '../../../packages/domain/src/index';
 
-import { getParserProvider } from './config';
+import { getParserProvider, normalizeParseOutputLanguage } from './config';
 import type { AppConfig } from './config';
 import type { BoardsDatabase, SyncFileState } from './db';
 import {
@@ -33,24 +33,27 @@ export interface SyncOptions {
   onProgress?: (event: SyncProgressEvent) => void;
 }
 
-const PARSER_CONTRACT_VERSION = 'thread-issue-v2';
+const PARSER_CONTRACT_VERSION = 'thread-issue-v3';
 
 function parserFingerprint(config: AppConfig): string {
   const provider = getParserProvider(config);
+  const outputLanguage = normalizeParseOutputLanguage(
+    config.parseOutputLanguage,
+  );
 
   if (provider === 'codex-cli') {
     if (!config.openAiModel) {
       return `fallback-only:${PARSER_CONTRACT_VERSION}`;
     }
 
-    return `codex-cli:${config.openAiModel}:plain-json:${PARSER_CONTRACT_VERSION}`;
+    return `codex-cli:${config.openAiModel}:plain-json:${PARSER_CONTRACT_VERSION}:language=${outputLanguage}`;
   }
 
   if (!config.openAiBaseUrl || !config.openAiApiKey || !config.openAiModel) {
     return `fallback-only:${PARSER_CONTRACT_VERSION}`;
   }
 
-  return `openai-compatible:${config.openAiBaseUrl}:${config.openAiModel}:key-configured:${PARSER_CONTRACT_VERSION}`;
+  return `openai-compatible:${config.openAiBaseUrl}:${config.openAiModel}:key-configured:${PARSER_CONTRACT_VERSION}:language=${outputLanguage}`;
 }
 
 function hasUpdatedRolloutFile(
@@ -236,6 +239,7 @@ export class SyncService {
           openAiBaseUrl: this.config.openAiBaseUrl,
           openAiApiKey: this.config.openAiApiKey,
           openAiModel: this.config.openAiModel,
+          outputLanguage: this.config.parseOutputLanguage,
         });
 
         const needsReviewCount = built.issues.filter(

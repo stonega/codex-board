@@ -298,6 +298,7 @@ export function createAppServer(config: AppConfig = getConfig()) {
         baseUrl?: string | null;
         model?: string | null;
         apiKey?: string | null;
+        outputLanguage?: string | null;
       };
     };
 
