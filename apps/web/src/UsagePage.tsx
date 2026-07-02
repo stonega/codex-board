@@ -288,6 +288,7 @@ export function UsagePage({ refreshToken = 0 }: { refreshToken?: number }) {
   }, [usageRequest, rangePreset, customStartDate, customEndDate]);
 
   const daily = usage?.daily ?? [];
+  const totalSummary = usage?.total ?? usage?.summary;
 
   return (
     <div className="flex w-full flex-col gap-4 px-4 py-5 pb-12 sm:px-8 lg:px-10">
@@ -350,7 +351,7 @@ export function UsagePage({ refreshToken = 0 }: { refreshToken?: number }) {
           detail={`${formatNumber(usage?.summary.eventCount ?? 0)} model calls`}
           icon={<Sigma />}
           label="Tokens"
-          secondaryValue={formatNumber(usage?.total.totalTokens ?? 0)}
+          secondaryValue={formatNumber(totalSummary?.totalTokens ?? 0)}
           value={formatNumber(usage?.summary.totalTokens ?? 0)}
         />
         <MetricCard
@@ -361,21 +362,21 @@ export function UsagePage({ refreshToken = 0 }: { refreshToken?: number }) {
           }
           icon={<CircleDollarSign />}
           label="Estimated fee"
-          secondaryValue={formatMoney(usage?.total.estimatedCostUsd ?? 0)}
+          secondaryValue={formatMoney(totalSummary?.estimatedCostUsd ?? 0)}
           value={formatMoney(usage?.summary.estimatedCostUsd ?? 0)}
         />
         <MetricCard
           detail={`${formatNumber(usage?.summary.cachedInputTokens ?? 0)} cached input`}
           icon={<RefreshCw />}
           label="Cache ratio"
-          secondaryValue={formatPercent(usage?.total.cacheRatio ?? 0)}
+          secondaryValue={formatPercent(totalSummary?.cacheRatio ?? 0)}
           value={formatPercent(usage?.summary.cacheRatio ?? 0)}
         />
         <MetricCard
           detail="New thread starts"
           icon={<CalendarDays />}
           label="Threads"
-          secondaryValue={formatNumber(usage?.total.newThreadCount ?? 0)}
+          secondaryValue={formatNumber(totalSummary?.newThreadCount ?? 0)}
           value={formatNumber(usage?.summary.newThreadCount ?? 0)}
         />
         <MetricCard
