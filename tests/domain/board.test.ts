@@ -1914,6 +1914,74 @@ describe('rollout parser', () => {
     rmSync(root, { force: true, recursive: true });
   });
 
+  test('retries ai parsing when the response is not a JSON object', async () => {
+    const workspacePath = '/tmp/codex-boards-fixture';
+    mkdirSync(join(workspacePath, '.git'), { recursive: true });
+
+    const candidate = parseRolloutFile({
+      path: join(process.cwd(), 'tests/fixtures/rollout-sample.jsonl'),
+      mtimeMs: Date.now(),
+      sizeBytes: 1,
+    });
+    if (!candidate) {
+      throw new Error('Expected parsed candidate');
+    }
+
+    const originalFetch = globalThis.fetch;
+    let fetchCalls = 0;
+    globalThis.fetch = async () => {
+      fetchCalls += 1;
+      return new Response(
+        JSON.stringify({
+          model: 'gpt-4.1-mini-2026-04-01',
+          usage: {
+            prompt_tokens: 80,
+            completion_tokens: 20,
+            total_tokens: 100,
+          },
+          choices: [
+            {
+              message: {
+                content:
+                  fetchCalls < 4
+                    ? 'I can summarize the thread, but I will not emit JSON.'
+                    : JSON.stringify({
+                        title: 'Retry non-json parse responses',
+                        summary:
+                          'Retry parser calls when the model omits the required JSON object.',
+                        tags: ['backend', 'sync'],
+                        warnings: [],
+                      }),
+              },
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: {
+            'content-type': 'application/json',
+          },
+        },
+      );
+    };
+
+    try {
+      const result = await buildIssuesFromCandidate(candidate, {
+        openAiApiKey: 'test-key',
+        openAiBaseUrl: 'http://localhost:11434/v1',
+        openAiModel: 'gpt-4.1-mini',
+      });
+
+      expect(fetchCalls).toBe(4);
+      expect(result.parseMode).toBe('ai');
+      expect(result.aiDiagnostics.requestCount).toBe(4);
+      expect(result.issues[0]?.title).toBe('Retry non-json parse responses');
+    } finally {
+      globalThis.fetch = originalFetch;
+      rmSync(workspacePath, { force: true, recursive: true });
+    }
+  });
+
   test('rewrites question-style ai titles into outcome titles', async () => {
     const workspacePath = '/tmp/codex-boards-fixture-ai-title';
     mkdirSync(join(workspacePath, '.git'), { recursive: true });

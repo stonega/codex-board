@@ -36,6 +36,8 @@ export interface RolloutFile {
 }
 
 const CODEX_CLI_SYNC_MARKER = 'CODEX_BOARDS_SYNC_PARSER_RUN_DO_NOT_IMPORT';
+const AI_PARSE_JSON_OBJECT_ERROR = 'AI parse did not return a JSON object.';
+const AI_PARSE_MAX_RETRIES = 3;
 
 export interface ThreadMessage {
   role: 'user' | 'assistant' | 'tool';
@@ -71,6 +73,12 @@ interface AiParseResult {
   summary: string;
   tags?: string[];
   warnings?: string[];
+}
+
+interface AiProviderResult {
+  result: AiParseResult;
+  responseModel: string | null;
+  tokenUsage: SyncTokenUsage;
 }
 
 export function listRolloutFiles(root: string): RolloutFile[] {
@@ -1266,7 +1274,7 @@ function extractJsonObjectFromText(content: string): string {
 
   const start = trimmed.indexOf('{');
   if (start === -1) {
-    throw new Error('AI parse did not return a JSON object.');
+    throw new Error(AI_PARSE_JSON_OBJECT_ERROR);
   }
 
   let depth = 0;
@@ -1317,6 +1325,10 @@ function parseAiResultContent(content: string): AiParseResult {
   return JSON.parse(extractJsonObjectFromText(content)) as AiParseResult;
 }
 
+function shouldRetryAiParse(error: unknown): boolean {
+  return error instanceof Error && error.message === AI_PARSE_JSON_OBJECT_ERROR;
+}
+
 async function parseWithAi(
   payload: ParsePayload,
   candidate: ThreadCandidate,
@@ -1326,11 +1338,7 @@ async function parseWithAi(
     model: string;
     outputLanguage: string;
   },
-): Promise<{
-  result: AiParseResult;
-  responseModel: string | null;
-  tokenUsage: SyncTokenUsage;
-}> {
+): Promise<AiProviderResult> {
   const requestBody = {
     model: options.model,
     temperature: 0.1,
@@ -1408,11 +1416,7 @@ async function parseWithCodexCli(
     model: string;
     outputLanguage: string;
   },
-): Promise<{
-  result: AiParseResult;
-  responseModel: string | null;
-  tokenUsage: SyncTokenUsage;
-}> {
+): Promise<AiProviderResult> {
   const outputRoot = mkdtempSync(join(tmpdir(), 'codex-boards-parser-'));
   const outputPath = join(outputRoot, 'last-message.txt');
   const prompt = `${AI_PARSE_SYSTEM_PROMPT}
@@ -1535,6 +1539,7 @@ export async function buildIssuesFromCandidate(
   const canUseCodexCli = Boolean(
     parserProvider === 'codex-cli' && options.openAiModel,
   );
+  let aiRequestCount = 0;
 
   if (canUseOpenAiCompatible || canUseCodexCli) {
     try {
@@ -1543,18 +1548,39 @@ export async function buildIssuesFromCandidate(
         throw new Error('Missing AI parser configuration.');
       }
 
-      const ai =
-        parserProvider === 'codex-cli'
-          ? await parseWithCodexCli(payload, candidate, {
-              model,
-              outputLanguage,
-            })
-          : await parseWithAi(payload, candidate, {
-              baseUrl: options.openAiBaseUrl ?? '',
-              apiKey: options.openAiApiKey ?? '',
-              model,
-              outputLanguage,
-            });
+      let ai: AiProviderResult | null = null;
+      let lastError: unknown = null;
+
+      for (let attempt = 1; attempt <= AI_PARSE_MAX_RETRIES + 1; attempt += 1) {
+        aiRequestCount = attempt;
+
+        try {
+          ai =
+            parserProvider === 'codex-cli'
+              ? await parseWithCodexCli(payload, candidate, {
+                  model,
+                  outputLanguage,
+                })
+              : await parseWithAi(payload, candidate, {
+                  baseUrl: options.openAiBaseUrl ?? '',
+                  apiKey: options.openAiApiKey ?? '',
+                  model,
+                  outputLanguage,
+                });
+          break;
+        } catch (error) {
+          lastError = error;
+          if (!shouldRetryAiParse(error) || attempt > AI_PARSE_MAX_RETRIES) {
+            throw error;
+          }
+        }
+      }
+
+      if (!ai) {
+        throw lastError instanceof Error
+          ? lastError
+          : new Error('AI parse failed.');
+      }
 
       const issue = buildIssue({
         project,
@@ -1572,7 +1598,7 @@ export async function buildIssuesFromCandidate(
         issues: [issue],
         parseMode: 'ai',
         aiDiagnostics: {
-          requestCount: 1,
+          requestCount: aiRequestCount,
           responseModel: ai.responseModel,
           tokenUsage: ai.tokenUsage,
         },
@@ -1599,7 +1625,7 @@ export async function buildIssuesFromCandidate(
     issues: [issue],
     parseMode: 'fallback',
     aiDiagnostics: {
-      requestCount: 0,
+      requestCount: aiRequestCount,
       responseModel: null,
       tokenUsage: {
         promptTokens: 0,
