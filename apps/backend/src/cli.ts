@@ -68,7 +68,7 @@ Flags:
   --issue <issue-id>       Export only the selected parent issue. Repeatable.
   --dry-run                Print the Multica commands without executing them.
   --skip-sync              Export the current SQLite state without running sync first.
-  --no-children            Export only parent issues.
+  --no-children            Accepted for compatibility; thread issues have no children.
   --help                   Show this help text.
 `;
 
@@ -207,30 +207,6 @@ export function runMulticaCommand(args: string[]): MulticaCommandResult {
   };
 }
 
-function mapMulticaStatus(status: ParsedIssue['status']): string | null {
-  if (status === 'unknown') {
-    return null;
-  }
-
-  return status;
-}
-
-function mapMulticaPriority(priority: ParsedIssue['priority']): string | null {
-  if (priority === 'unknown') {
-    return null;
-  }
-
-  return priority;
-}
-
-function isRfc3339(value: string | null): value is string {
-  if (!value) {
-    return false;
-  }
-
-  return !Number.isNaN(Date.parse(value));
-}
-
 export function buildMulticaDescription(issue: ParsedIssue): string {
   const lines = [issue.summary.trim() || issue.title.trim(), ''];
 
@@ -295,44 +271,11 @@ function buildMulticaCreateArgs(
     buildMulticaDescription(issue),
   ];
 
-  const status = mapMulticaStatus(issue.status);
-  if (status) {
-    args.push('--status', status);
-  }
-
-  const priority = mapMulticaPriority(issue.priority);
-  if (priority) {
-    args.push('--priority', priority);
-  }
-
-  if (issue.assignee) {
-    args.push('--assignee', issue.assignee);
-  }
-
-  if (isRfc3339(issue.dueDate)) {
-    args.push('--due-date', issue.dueDate);
-  }
-
   if (parentMulticaIssueId) {
     args.push('--parent', parentMulticaIssueId);
   }
 
   return args;
-}
-
-function omitCommandFlag(args: string[], flag: string): string[] {
-  const next: string[] = [];
-
-  for (let index = 0; index < args.length; index += 1) {
-    if (args[index] === flag) {
-      index += 1;
-      continue;
-    }
-
-    next.push(args[index] as string);
-  }
-
-  return next;
 }
 
 function readCreatedMulticaIssueId(stdout: string): string | null {
@@ -415,24 +358,6 @@ async function exportSingleIssue(
   }
 
   const result = await runCommand(command);
-  if (
-    result.exitCode !== 0 &&
-    issue.assignee &&
-    /resolve assignee|no member or agent found matching/i.test(result.stderr)
-  ) {
-    const fallbackCommand = omitCommandFlag(command, '--assignee');
-    const fallbackResult = await runCommand(fallbackCommand);
-
-    if (fallbackResult.exitCode === 0) {
-      return {
-        sourceIssueId: issue.id,
-        multicaIssueId: readCreatedMulticaIssueId(fallbackResult.stdout),
-        title: issue.title,
-        command: fallbackCommand,
-        dryRun: false,
-      };
-    }
-  }
 
   if (result.exitCode !== 0) {
     const stderr = result.stderr.trim() || 'Unknown multica error';
@@ -467,52 +392,20 @@ export async function exportIssuesToMultica(
     options.issueIds,
   );
   if (issues.length === 0) {
-    throw new Error(`No parent issues found for project ${options.projectId}`);
+    throw new Error(`No issues found for project ${options.projectId}`);
   }
 
   const exported: ExportedMulticaIssue[] = [];
   const skippedChildren: ExportMulticaResult['skippedChildren'] = [];
 
   for (const issue of issues) {
-    const parentResult = await exportSingleIssue(
+    const result = await exportSingleIssue(
       issue,
       null,
       options.dryRun,
       runCommand,
     );
-    exported.push(parentResult);
-
-    if (
-      !options.includeChildren ||
-      !issue.children ||
-      issue.children.length === 0
-    ) {
-      continue;
-    }
-
-    const parentIdForChildren =
-      parentResult.multicaIssueId ??
-      (options.dryRun ? `dry-run:${issue.id}` : null);
-
-    if (!parentIdForChildren) {
-      for (const child of issue.children) {
-        skippedChildren.push({
-          sourceIssueId: child.id,
-          reason: `Parent export for ${issue.id} did not return a Multica issue id`,
-        });
-      }
-      continue;
-    }
-
-    for (const child of issue.children) {
-      const childResult = await exportSingleIssue(
-        child,
-        parentIdForChildren,
-        options.dryRun,
-        runCommand,
-      );
-      exported.push(childResult);
-    }
+    exported.push(result);
   }
 
   return {

@@ -13,6 +13,7 @@ import type {
   SavedView,
   SavedViewListResponse,
   SyncDiagnostics,
+  ThreadImage,
   UsageRefreshSummary,
 } from '../../../packages/domain/src/index';
 
@@ -118,15 +119,10 @@ export class BoardsDatabase {
         id TEXT PRIMARY KEY,
         thread_id TEXT NOT NULL,
         project_id TEXT NOT NULL,
-        parent_issue_id TEXT,
-        kind TEXT NOT NULL,
         title TEXT NOT NULL,
-        status TEXT NOT NULL,
-        priority TEXT NOT NULL,
-        assignee TEXT,
-        due_date TEXT,
         tags_json TEXT NOT NULL,
         summary TEXT NOT NULL,
+        started_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         parse_mode TEXT NOT NULL,
         confidence REAL NOT NULL,
@@ -140,12 +136,38 @@ export class BoardsDatabase {
         session_id TEXT NOT NULL,
         warnings_json TEXT NOT NULL,
         parse_payload_preview TEXT NOT NULL,
-        sub_issue_count INTEGER NOT NULL DEFAULT 0,
+        message_count INTEGER NOT NULL DEFAULT 0,
+        command_count INTEGER NOT NULL DEFAULT 0,
+        image_count INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY (project_id) REFERENCES projects(id)
       );
 
       CREATE INDEX IF NOT EXISTS idx_issues_project_id ON issues(project_id);
-      CREATE INDEX IF NOT EXISTS idx_issues_parent_issue_id ON issues(parent_issue_id);
+      CREATE INDEX IF NOT EXISTS idx_issues_thread_id ON issues(thread_id);
+
+      CREATE TABLE IF NOT EXISTS thread_images (
+        id TEXT PRIMARY KEY,
+        issue_id TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        message_index INTEGER NOT NULL,
+        part_index INTEGER NOT NULL,
+        source_type TEXT NOT NULL,
+        mime_type TEXT,
+        filename TEXT,
+        original_url TEXT,
+        local_path TEXT,
+        width INTEGER,
+        height INTEGER,
+        size_bytes INTEGER,
+        caption TEXT,
+        message_excerpt TEXT,
+        created_at TEXT,
+        FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_thread_images_issue_id ON thread_images(issue_id);
+      CREATE INDEX IF NOT EXISTS idx_thread_images_thread_id ON thread_images(thread_id);
 
       CREATE TABLE IF NOT EXISTS skill_thread_signals (
         thread_id TEXT PRIMARY KEY,
@@ -235,6 +257,26 @@ export class BoardsDatabase {
     const hasThreadIdColumn = syncFileColumns.some(
       (column) => column.name === 'thread_id',
     );
+    const issueColumns = this.db
+      .query('PRAGMA table_info(issues)')
+      .all() as Array<{
+      name: string;
+    }>;
+    const needsIssueTableRebuild =
+      issueColumns.some((column) =>
+        [
+          'parent_issue_id',
+          'kind',
+          'status',
+          'priority',
+          'assignee',
+          'due_date',
+          'sub_issue_count',
+        ].includes(column.name),
+      ) ||
+      !issueColumns.some((column) => column.name === 'started_at') ||
+      !issueColumns.some((column) => column.name === 'message_count') ||
+      !issueColumns.some((column) => column.name === 'image_count');
 
     if (!hasParseLogColumn) {
       this.db.exec(
@@ -289,6 +331,87 @@ export class BoardsDatabase {
     if (!hasThreadIdColumn) {
       this.db.exec('ALTER TABLE sync_files ADD COLUMN thread_id TEXT');
     }
+
+    if (needsIssueTableRebuild) {
+      this.rebuildIssuesTable();
+    }
+  }
+
+  private rebuildIssuesTable(): void {
+    this.db.exec(`
+      PRAGMA foreign_keys = OFF;
+
+      DROP TABLE IF EXISTS issues_next;
+
+      CREATE TABLE IF NOT EXISTS issues_next (
+        id TEXT PRIMARY KEY,
+        thread_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        tags_json TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        parse_mode TEXT NOT NULL,
+        confidence REAL NOT NULL,
+        needs_review INTEGER NOT NULL,
+        repository TEXT NOT NULL,
+        workspace_path TEXT NOT NULL,
+        branch TEXT,
+        commits_json TEXT NOT NULL,
+        git_tags_json TEXT NOT NULL,
+        rollout_path TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        warnings_json TEXT NOT NULL,
+        parse_payload_preview TEXT NOT NULL,
+        message_count INTEGER NOT NULL DEFAULT 0,
+        command_count INTEGER NOT NULL DEFAULT 0,
+        image_count INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY (project_id) REFERENCES projects(id)
+      );
+
+      INSERT OR REPLACE INTO issues_next (
+        id, thread_id, project_id, title, tags_json, summary, started_at, updated_at,
+        parse_mode, confidence, needs_review, repository, workspace_path, branch,
+        commits_json, git_tags_json, rollout_path, session_id, warnings_json,
+        parse_payload_preview, message_count, command_count, image_count
+      )
+      SELECT
+        project_id || ':' || thread_id,
+        thread_id,
+        project_id,
+        title,
+        tags_json,
+        summary,
+        updated_at,
+        updated_at,
+        parse_mode,
+        confidence,
+        needs_review,
+        repository,
+        workspace_path,
+        branch,
+        commits_json,
+        git_tags_json,
+        rollout_path,
+        session_id,
+        warnings_json,
+        parse_payload_preview,
+        0,
+        0,
+        0
+      FROM issues
+      WHERE COALESCE(kind, 'parent') = 'parent' OR parent_issue_id IS NULL;
+
+      DELETE FROM thread_images;
+      DROP TABLE issues;
+      ALTER TABLE issues_next RENAME TO issues;
+
+      CREATE INDEX IF NOT EXISTS idx_issues_project_id ON issues(project_id);
+      CREATE INDEX IF NOT EXISTS idx_issues_thread_id ON issues(thread_id);
+
+      PRAGMA foreign_keys = ON;
+    `);
   }
 
   close(): void {
@@ -451,6 +574,7 @@ export class BoardsDatabase {
   resetImportedData(): void {
     this.db.exec(`
       DELETE FROM skill_thread_signals;
+      DELETE FROM thread_images;
       DELETE FROM issues;
       DELETE FROM projects;
       DELETE FROM sync_files;
@@ -550,28 +674,24 @@ export class BoardsDatabase {
   }
 
   upsertIssue(issue: ParsedIssue): void {
-    this.db
-      .query(
-        `
+    this.db.transaction(() => {
+      this.db
+        .query(
+          `
         INSERT INTO issues (
-          id, thread_id, project_id, parent_issue_id, kind, title, status, priority, assignee,
-          due_date, tags_json, summary, updated_at, parse_mode, confidence, needs_review,
-          repository, workspace_path, branch, commits_json, git_tags_json, rollout_path,
-          session_id, warnings_json, parse_payload_preview, sub_issue_count
+          id, thread_id, project_id, title, tags_json, summary, started_at, updated_at,
+          parse_mode, confidence, needs_review, repository, workspace_path, branch,
+          commits_json, git_tags_json, rollout_path, session_id, warnings_json,
+          parse_payload_preview, message_count, command_count, image_count
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           thread_id = excluded.thread_id,
           project_id = excluded.project_id,
-          parent_issue_id = excluded.parent_issue_id,
-          kind = excluded.kind,
           title = excluded.title,
-          status = excluded.status,
-          priority = excluded.priority,
-          assignee = excluded.assignee,
-          due_date = excluded.due_date,
           tags_json = excluded.tags_json,
           summary = excluded.summary,
+          started_at = excluded.started_at,
           updated_at = excluded.updated_at,
           parse_mode = excluded.parse_mode,
           confidence = excluded.confidence,
@@ -585,37 +705,72 @@ export class BoardsDatabase {
           session_id = excluded.session_id,
           warnings_json = excluded.warnings_json,
           parse_payload_preview = excluded.parse_payload_preview,
-          sub_issue_count = excluded.sub_issue_count
+          message_count = excluded.message_count,
+          command_count = excluded.command_count,
+          image_count = excluded.image_count
       `,
-      )
-      .run(
-        issue.id,
-        issue.threadId,
-        issue.projectId,
-        issue.parentIssueId,
-        issue.kind,
-        issue.title,
-        issue.status,
-        issue.priority,
-        issue.assignee,
-        issue.dueDate,
-        JSON.stringify(issue.tags),
-        issue.summary,
-        issue.updatedAt,
-        issue.parseMode,
-        issue.confidence,
-        issue.needsReview ? 1 : 0,
-        issue.git.repository,
-        issue.git.workspacePath,
-        issue.git.branch ?? null,
-        JSON.stringify(issue.git.commits),
-        JSON.stringify(issue.git.tags),
-        issue.evidence.rolloutPath,
-        issue.evidence.sessionId,
-        JSON.stringify(issue.evidence.warnings),
-        issue.evidence.parsePayloadPreview,
-        issue.subIssueCount,
-      );
+        )
+        .run(
+          issue.id,
+          issue.threadId,
+          issue.projectId,
+          issue.title,
+          JSON.stringify(issue.tags),
+          issue.summary,
+          issue.startedAt,
+          issue.updatedAt,
+          issue.parseMode,
+          issue.confidence,
+          issue.needsReview ? 1 : 0,
+          issue.git.repository,
+          issue.git.workspacePath,
+          issue.git.branch ?? null,
+          JSON.stringify(issue.git.commits),
+          JSON.stringify(issue.git.tags),
+          issue.evidence.rolloutPath,
+          issue.evidence.sessionId,
+          JSON.stringify(issue.evidence.warnings),
+          issue.evidence.parsePayloadPreview,
+          issue.stats.messageCount,
+          issue.stats.commandCount,
+          issue.images?.length ?? issue.stats.imageCount,
+        );
+
+      this.db
+        .query('DELETE FROM thread_images WHERE issue_id = ?')
+        .run(issue.id);
+
+      const insertImage = this.db.query(`
+        INSERT INTO thread_images (
+          id, issue_id, thread_id, role, message_index, part_index, source_type,
+          mime_type, filename, original_url, local_path, width, height, size_bytes,
+          caption, message_excerpt, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+
+      for (const image of issue.images ?? []) {
+        insertImage.run(
+          image.id,
+          issue.id,
+          image.threadId,
+          image.role,
+          image.messageIndex,
+          image.partIndex,
+          image.sourceType,
+          image.mimeType,
+          image.filename,
+          image.originalUrl,
+          image.localPath,
+          image.width,
+          image.height,
+          image.sizeBytes,
+          image.caption,
+          image.messageExcerpt,
+          image.createdAt,
+        );
+      }
+    })();
   }
 
   deleteThreadIssues(threadId: string): void {
@@ -881,8 +1036,7 @@ export class BoardsDatabase {
           p.repository as repository,
           p.workspace_path as workspacePath,
           p.last_updated_at as lastUpdatedAt,
-          COUNT(CASE WHEN i.kind = 'parent' THEN 1 END) as issueCount,
-          COUNT(CASE WHEN i.kind = 'sub_issue' THEN 1 END) as subIssueCount,
+          COUNT(i.id) as issueCount,
           COUNT(CASE WHEN i.needs_review = 1 THEN 1 END) as needsReviewCount
         FROM projects p
         LEFT JOIN issues i ON i.project_id = p.id
@@ -899,20 +1053,72 @@ export class BoardsDatabase {
     };
   }
 
-  private hydrateIssue(row: Record<string, unknown>): ParsedIssue {
+  private hydrateImage(row: Record<string, unknown>): ThreadImage {
+    return {
+      id: String(row.id),
+      issueId: String(row.issueId),
+      threadId: String(row.threadId),
+      role: row.role as ThreadImage['role'],
+      messageIndex: Number(row.messageIndex),
+      partIndex: Number(row.partIndex),
+      sourceType: row.sourceType as ThreadImage['sourceType'],
+      mimeType: (row.mimeType as string | null) ?? null,
+      filename: (row.filename as string | null) ?? null,
+      originalUrl: (row.originalUrl as string | null) ?? null,
+      localPath: (row.localPath as string | null) ?? null,
+      width: row.width === null ? null : Number(row.width),
+      height: row.height === null ? null : Number(row.height),
+      sizeBytes: row.sizeBytes === null ? null : Number(row.sizeBytes),
+      caption: (row.caption as string | null) ?? null,
+      messageExcerpt: (row.messageExcerpt as string | null) ?? null,
+      createdAt: (row.createdAt as string | null) ?? null,
+    };
+  }
+
+  private listIssueImages(issueId: string): ThreadImage[] {
+    const rows = this.db
+      .query(
+        `
+        SELECT
+          id,
+          issue_id as issueId,
+          thread_id as threadId,
+          role,
+          message_index as messageIndex,
+          part_index as partIndex,
+          source_type as sourceType,
+          mime_type as mimeType,
+          filename,
+          original_url as originalUrl,
+          local_path as localPath,
+          width,
+          height,
+          size_bytes as sizeBytes,
+          caption,
+          message_excerpt as messageExcerpt,
+          created_at as createdAt
+        FROM thread_images
+        WHERE issue_id = ?
+        ORDER BY message_index ASC, part_index ASC, id ASC
+      `,
+      )
+      .all(issueId) as Record<string, unknown>[];
+
+    return rows.map((row) => this.hydrateImage(row));
+  }
+
+  private hydrateIssue(
+    row: Record<string, unknown>,
+    images?: ThreadImage[],
+  ): ParsedIssue {
     return {
       id: String(row.id),
       threadId: String(row.threadId),
       projectId: String(row.projectId),
-      parentIssueId: (row.parentIssueId as string | null) ?? null,
-      kind: row.kind as ParsedIssue['kind'],
       title: String(row.title),
-      status: row.status as ParsedIssue['status'],
-      priority: row.priority as ParsedIssue['priority'],
-      assignee: (row.assignee as string | null) ?? null,
-      dueDate: (row.dueDate as string | null) ?? null,
       tags: parseJson<string[]>(row.tagsJson as string),
       summary: String(row.summary),
+      startedAt: String(row.startedAt),
       updatedAt: String(row.updatedAt),
       parseMode: row.parseMode as ParsedIssue['parseMode'],
       confidence: Number(row.confidence),
@@ -931,24 +1137,18 @@ export class BoardsDatabase {
         warnings: parseJson(row.warningsJson as string),
         parsePayloadPreview: String(row.parsePayloadPreview),
       },
-      subIssueCount: Number(row.subIssueCount),
-      children: [],
+      stats: {
+        messageCount: Number(row.messageCount),
+        commandCount: Number(row.commandCount),
+        imageCount: Number(row.imageCount),
+      },
+      images,
     };
   }
 
   listIssues(projectId: string, filters: IssueFilters): IssueListResponse {
-    const clauses = ['project_id = ?', "kind = 'parent'"];
+    const clauses = ['project_id = ?'];
     const args: Array<string | number> = [projectId];
-
-    if (filters.status && filters.status !== 'all') {
-      clauses.push('status = ?');
-      args.push(filters.status);
-    }
-
-    if (filters.priority && filters.priority !== 'all') {
-      clauses.push('priority = ?');
-      args.push(filters.priority);
-    }
 
     if (filters.parseMode && filters.parseMode !== 'all') {
       clauses.push('parse_mode = ?');
@@ -968,6 +1168,10 @@ export class BoardsDatabase {
       clauses.push("git_tags_json != '[]'");
     }
 
+    if (filters.hasImages) {
+      clauses.push('image_count > 0');
+    }
+
     if (filters.tag) {
       clauses.push('tags_json LIKE ?');
       args.push(`%${filters.tag.toLowerCase()}%`);
@@ -985,13 +1189,13 @@ export class BoardsDatabase {
       .query(
         `
         SELECT
-          id, thread_id as threadId, project_id as projectId, parent_issue_id as parentIssueId,
-          kind, title, status, priority, assignee, due_date as dueDate, tags_json as tagsJson,
-          summary, updated_at as updatedAt, parse_mode as parseMode, confidence,
+          id, thread_id as threadId, project_id as projectId, title, tags_json as tagsJson,
+          summary, started_at as startedAt, updated_at as updatedAt, parse_mode as parseMode, confidence,
           needs_review as needsReview, repository, workspace_path as workspacePath, branch,
           commits_json as commitsJson, git_tags_json as gitTagsJson, rollout_path as rolloutPath,
           session_id as sessionId, warnings_json as warningsJson,
-          parse_payload_preview as parsePayloadPreview, sub_issue_count as subIssueCount
+          parse_payload_preview as parsePayloadPreview, message_count as messageCount,
+          command_count as commandCount, image_count as imageCount
         FROM issues
         WHERE ${clauses.join(' AND ')}
         ORDER BY needs_review DESC, updated_at DESC, title ASC
@@ -1010,8 +1214,7 @@ export class BoardsDatabase {
           p.repository as repository,
           p.workspace_path as workspacePath,
           p.last_updated_at as lastUpdatedAt,
-          COUNT(CASE WHEN i.kind = 'parent' THEN 1 END) as issueCount,
-          COUNT(CASE WHEN i.kind = 'sub_issue' THEN 1 END) as subIssueCount,
+          COUNT(i.id) as issueCount,
           COUNT(CASE WHEN i.needs_review = 1 THEN 1 END) as needsReviewCount
         FROM projects p
         LEFT JOIN issues i ON i.project_id = p.id
@@ -1034,13 +1237,13 @@ export class BoardsDatabase {
       .query(
         `
         SELECT
-          id, thread_id as threadId, project_id as projectId, parent_issue_id as parentIssueId,
-          kind, title, status, priority, assignee, due_date as dueDate, tags_json as tagsJson,
-          summary, updated_at as updatedAt, parse_mode as parseMode, confidence,
+          id, thread_id as threadId, project_id as projectId, title, tags_json as tagsJson,
+          summary, started_at as startedAt, updated_at as updatedAt, parse_mode as parseMode, confidence,
           needs_review as needsReview, repository, workspace_path as workspacePath, branch,
           commits_json as commitsJson, git_tags_json as gitTagsJson, rollout_path as rolloutPath,
           session_id as sessionId, warnings_json as warningsJson,
-          parse_payload_preview as parsePayloadPreview, sub_issue_count as subIssueCount
+          parse_payload_preview as parsePayloadPreview, message_count as messageCount,
+          command_count as commandCount, image_count as imageCount
         FROM issues
         WHERE project_id = ?
         ORDER BY updated_at DESC, title ASC
@@ -1056,13 +1259,13 @@ export class BoardsDatabase {
       .query(
         `
         SELECT
-          id, thread_id as threadId, project_id as projectId, parent_issue_id as parentIssueId,
-          kind, title, status, priority, assignee, due_date as dueDate, tags_json as tagsJson,
-          summary, updated_at as updatedAt, parse_mode as parseMode, confidence,
+          id, thread_id as threadId, project_id as projectId, title, tags_json as tagsJson,
+          summary, started_at as startedAt, updated_at as updatedAt, parse_mode as parseMode, confidence,
           needs_review as needsReview, repository, workspace_path as workspacePath, branch,
           commits_json as commitsJson, git_tags_json as gitTagsJson, rollout_path as rolloutPath,
           session_id as sessionId, warnings_json as warningsJson,
-          parse_payload_preview as parsePayloadPreview, sub_issue_count as subIssueCount
+          parse_payload_preview as parsePayloadPreview, message_count as messageCount,
+          command_count as commandCount, image_count as imageCount
         FROM issues
         WHERE id = ?
       `,
@@ -1076,26 +1279,7 @@ export class BoardsDatabase {
       };
     }
 
-    const issue = this.hydrateIssue(row);
-    const children = this.db
-      .query(
-        `
-        SELECT
-          id, thread_id as threadId, project_id as projectId, parent_issue_id as parentIssueId,
-          kind, title, status, priority, assignee, due_date as dueDate, tags_json as tagsJson,
-          summary, updated_at as updatedAt, parse_mode as parseMode, confidence,
-          needs_review as needsReview, repository, workspace_path as workspacePath, branch,
-          commits_json as commitsJson, git_tags_json as gitTagsJson, rollout_path as rolloutPath,
-          session_id as sessionId, warnings_json as warningsJson,
-          parse_payload_preview as parsePayloadPreview, sub_issue_count as subIssueCount
-        FROM issues
-        WHERE parent_issue_id = ?
-        ORDER BY updated_at DESC, title ASC
-      `,
-      )
-      .all(issueId) as Record<string, unknown>[];
-
-    issue.children = children.map((child) => this.hydrateIssue(child));
+    const issue = this.hydrateIssue(row, this.listIssueImages(issueId));
 
     return {
       generatedAt: new Date().toISOString(),
@@ -1107,37 +1291,6 @@ export class BoardsDatabase {
     this.db
       .query('UPDATE issues SET needs_review = ? WHERE id = ?')
       .run(needsReview ? 1 : 0, issueId);
-  }
-
-  mergeIssue(issueId: string, targetIssueId: string): void {
-    this.db
-      .query('UPDATE issues SET parent_issue_id = ? WHERE id = ?')
-      .run(targetIssueId, issueId);
-    this.recountSubIssues(targetIssueId);
-  }
-
-  splitIssue(issueId: string, children: ParsedIssue[]): void {
-    for (const child of children) {
-      this.upsertIssue(child);
-    }
-
-    this.recountSubIssues(issueId);
-  }
-
-  recountSubIssues(parentIssueId: string): void {
-    this.db
-      .query(
-        `
-        UPDATE issues
-        SET sub_issue_count = (
-          SELECT COUNT(*)
-          FROM issues child
-          WHERE child.parent_issue_id = issues.id
-        )
-        WHERE id = ?
-      `,
-      )
-      .run(parentIssueId);
   }
 
   listSavedViews(): SavedViewListResponse {

@@ -3,6 +3,7 @@ import {
   mkdirSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
@@ -22,8 +23,6 @@ import {
   parseRolloutFile,
 } from '../../apps/backend/src/rollout-parser';
 import {
-  inferIssuePriority,
-  inferIssueStatus,
   inferProjectId,
   inferProjectName,
   normalizeTags,
@@ -36,15 +35,6 @@ describe('domain helpers', () => {
     );
     expect(inferProjectId('codex boards', '/tmp/codex-boards')).toBe(
       'codex-boards',
-    );
-  });
-
-  test('infers status and priority from content', () => {
-    expect(inferIssueStatus('Need to fix this issue before merge')).toBe(
-      'todo',
-    );
-    expect(inferIssuePriority('Critical blocking bug for production')).toBe(
-      'urgent',
     );
   });
 
@@ -751,24 +741,18 @@ describe('parser settings', () => {
         repository: 'codex-boards',
         workspacePath: '/tmp/codex-boards',
         issueCount: 1,
-        subIssueCount: 1,
         needsReviewCount: 0,
         lastUpdatedAt: '2026-04-09T00:00:00.000Z',
       });
 
       server.database.upsertIssue({
-        id: 'issue-parent',
+        id: 'issue-1',
         threadId: 'thread-1',
         projectId: 'codex-boards',
-        parentIssueId: null,
-        kind: 'parent',
         title: 'Export issues to Multica',
-        status: 'todo',
-        priority: 'high',
-        assignee: null,
-        dueDate: null,
         tags: ['backend'],
         summary: 'Export the board data to Multica.',
+        startedAt: '2026-04-09T00:00:00.000Z',
         updatedAt: '2026-04-09T00:00:00.000Z',
         parseMode: 'fallback',
         confidence: 0.6,
@@ -787,43 +771,12 @@ describe('parser settings', () => {
           warnings: [],
           parsePayloadPreview: 'preview',
         },
-        subIssueCount: 1,
-        children: [],
-      });
-
-      server.database.upsertIssue({
-        id: 'issue-child',
-        threadId: 'thread-1',
-        projectId: 'codex-boards',
-        parentIssueId: 'issue-parent',
-        kind: 'sub_issue',
-        title: 'Export child issues to Multica',
-        status: 'todo',
-        priority: 'medium',
-        assignee: null,
-        dueDate: null,
-        tags: ['backend'],
-        summary: 'Export child issue data to Multica.',
-        updatedAt: '2026-04-09T00:00:00.000Z',
-        parseMode: 'fallback',
-        confidence: 0.6,
-        needsReview: false,
-        git: {
-          repository: 'codex-boards',
-          workspacePath: '/tmp/codex-boards',
-          branch: 'feat/export',
-          commits: [],
-          tags: [],
+        stats: {
+          messageCount: 2,
+          commandCount: 0,
+          imageCount: 0,
         },
-        evidence: {
-          rolloutPath: '/tmp/rollout.jsonl',
-          sessionId: 'session-1',
-          threadId: 'thread-1',
-          warnings: [],
-          parsePayloadPreview: 'preview',
-        },
-        subIssueCount: 0,
-        children: [],
+        images: [],
       });
 
       const response = await server.app.request('/api/export/multica', {
@@ -853,22 +806,15 @@ describe('parser settings', () => {
         ok: true,
         exported: [
           {
-            sourceIssueId: 'issue-parent',
+            sourceIssueId: 'issue-1',
             dryRun: true,
             title: 'Export issues to Multica',
-          },
-          {
-            sourceIssueId: 'issue-child',
-            dryRun: true,
-            title: 'Export child issues to Multica',
           },
         ],
         skippedChildren: [],
       });
-      expect(json.exported).toHaveLength(2);
+      expect(json.exported).toHaveLength(1);
       expect(json.exported[0]?.command).toContain('--title');
-      expect(json.exported[1]?.command).toContain('--parent');
-      expect(json.exported[1]?.command).toContain('dry-run:issue-parent');
     } finally {
       server.close();
       rmSync(root, { force: true, recursive: true });
@@ -904,16 +850,9 @@ describe('parser settings', () => {
             {
               message: {
                 content: JSON.stringify({
-                  parent: {
-                    title: 'Build a sync service for the board',
-                    summary: 'Save parsed board issues from rollout history.',
-                    status: 'done',
-                    priority: 'medium',
-                    assignee: null,
-                    dueDate: null,
-                    tags: ['backend', 'sync'],
-                  },
-                  subIssues: [],
+                  title: 'Build a sync service for the board',
+                  summary: 'Save parsed board issues from rollout history.',
+                  tags: ['backend', 'sync'],
                   warnings: [],
                 }),
               },
@@ -1059,7 +998,7 @@ if [ -z "$output" ]; then
   exit 44
 fi
 cat > "$output" <<'JSON'
-{"parent":{"title":"Parse rollout issues through Codex CLI","summary":"Use Codex CLI as the parser without relying on structured response schema support.","status":"done","priority":"medium","assignee":null,"dueDate":null,"tags":["backend","sync"]},"subIssues":[],"warnings":[]}
+{"title":"Parse rollout issues through Codex CLI","summary":"Use Codex CLI as the parser without relying on structured response schema support.","tags":["backend","sync"],"warnings":[]}
 JSON
 `,
     );
@@ -1184,18 +1123,11 @@ JSON
             {
               message: {
                 content: JSON.stringify({
-                  parent: {
-                    title:
-                      'Create project-oriented issue titles from rollout threads',
-                    summary:
-                      'Rewrite imported board issues into cleaner tracker-style titles.',
-                    status: 'done',
-                    priority: 'medium',
-                    assignee: null,
-                    dueDate: null,
-                    tags: ['backend', 'sync'],
-                  },
-                  subIssues: [],
+                  title:
+                    'Create project-oriented issue titles from rollout threads',
+                  summary:
+                    'Rewrite imported board issues into cleaner tracker-style titles.',
+                  tags: ['backend', 'sync'],
                   warnings: [],
                 }),
               },
@@ -1278,6 +1210,74 @@ JSON
       server.close();
       rmSync(root, { force: true, recursive: true });
       rmSync(gitWorkspace, { force: true, recursive: true });
+    }
+  });
+
+  test('reparses files imported with a legacy parser fingerprint', async () => {
+    const root = `/tmp/codex-boards-parser-version-${Date.now()}`;
+    const sessionsRoot = join(root, 'sessions');
+    const gitWorkspace = join(root, 'workspace');
+    const rolloutPath = join(
+      sessionsRoot,
+      '2026',
+      '04',
+      '06',
+      'rollout-sample.jsonl',
+    );
+    mkdirSync(join(sessionsRoot, '2026', '04', '06'), { recursive: true });
+    mkdirSync(join(gitWorkspace, '.git'), { recursive: true });
+
+    writeFileSync(
+      rolloutPath,
+      readFileSync(
+        join(process.cwd(), 'tests/fixtures/rollout-sample.jsonl'),
+        'utf8',
+      ).replaceAll('/tmp/codex-boards-fixture', gitWorkspace),
+    );
+
+    const server = createAppServer({
+      port: 7788,
+      sessionsRoot,
+      databasePath: join(root, 'boards.sqlite'),
+      openAiBaseUrl: null,
+      openAiApiKey: null,
+      openAiModel: null,
+      syncIntervalMs: 0,
+    });
+
+    try {
+      const rolloutStats = statSync(rolloutPath);
+      server.database.saveSyncFile(
+        rolloutPath,
+        rolloutStats.mtimeMs,
+        rolloutStats.size,
+        'fallback-only',
+        'thread-abc',
+        new Date().toISOString(),
+      );
+
+      const syncResponse = await server.app.request('/api/sync', {
+        method: 'POST',
+      });
+
+      expect(syncResponse.status).toBe(200);
+      expect(await syncResponse.json()).toMatchObject({
+        sync: {
+          scannedFiles: 1,
+          changedFiles: 1,
+          importedThreads: 1,
+          skippedThreads: 0,
+          parseLog: [
+            {
+              status: 'imported',
+              threadId: 'thread-abc',
+            },
+          ],
+        },
+      });
+    } finally {
+      server.close();
+      rmSync(root, { force: true, recursive: true });
     }
   });
 
@@ -1545,16 +1545,74 @@ describe('rollout parser', () => {
     });
 
     expect(result.parseMode).toBe('fallback');
-    expect(result.issues[0]?.kind).toBe('parent');
+    expect(result.issues).toHaveLength(1);
     expect(result.issues[0]?.title).toBe('Build a sync service for the board');
     expect(result.issues[0]?.summary).toContain(
       'Includes extract git commit info, save issues into sqlite, show a notion like table.',
     );
-    expect(result.issues[0]?.subIssueCount).toBeGreaterThan(0);
-    expect(result.issues.some((issue) => issue.kind === 'sub_issue')).toBe(
-      true,
-    );
+    expect(result.issues[0]?.stats.messageCount).toBeGreaterThan(0);
     rmSync(workspacePath, { force: true, recursive: true });
+  });
+
+  test('extracts image references from rollout threads', async () => {
+    const root = `/tmp/codex-boards-images-${Date.now()}`;
+    const workspacePath = join(root, 'workspace');
+    const rolloutPath = join(root, 'rollout-image-thread.jsonl');
+    mkdirSync(join(workspacePath, '.git'), { recursive: true });
+
+    writeFileSync(
+      rolloutPath,
+      [
+        JSON.stringify({
+          timestamp: '2026-04-05T05:00:00.000Z',
+          type: 'session_meta',
+          payload: {
+            id: 'image-thread',
+            timestamp: '2026-04-05T04:59:00.000Z',
+            cwd: workspacePath,
+          },
+        }),
+        JSON.stringify({
+          timestamp: '2026-04-05T05:00:01.000Z',
+          type: 'event_msg',
+          payload: {
+            type: 'user_message',
+            message:
+              'Build the image detail sheet. ![Screenshot](https://example.com/screenshot.png)',
+          },
+        }),
+      ].join('\n'),
+    );
+
+    const candidate = parseRolloutFile({
+      path: rolloutPath,
+      mtimeMs: Date.now(),
+      sizeBytes: 1,
+    });
+    if (!candidate) {
+      throw new Error('Expected parsed candidate');
+    }
+
+    expect(candidate.images).toHaveLength(1);
+    expect(candidate.images[0]).toMatchObject({
+      sourceType: 'url',
+      originalUrl: 'https://example.com/screenshot.png',
+      caption: 'Screenshot',
+    });
+
+    const result = await buildIssuesFromCandidate(candidate, {
+      openAiApiKey: null,
+      openAiBaseUrl: null,
+      openAiModel: null,
+    });
+
+    expect(result.issues[0]?.stats.imageCount).toBe(1);
+    expect(result.issues[0]?.images?.[0]).toMatchObject({
+      issueId: 'workspace:image-thread',
+      sourceType: 'url',
+    });
+
+    rmSync(root, { force: true, recursive: true });
   });
 
   test('rewrites question-style ai titles into outcome titles', async () => {
@@ -1584,18 +1642,11 @@ describe('rollout parser', () => {
             {
               message: {
                 content: JSON.stringify({
-                  parent: {
-                    title:
-                      'Can you confirm that the dictionary is used during recognize?',
-                    summary:
-                      'Verify dictionary-backed recognition and document the actual recognition path used by the feature.',
-                    status: 'done',
-                    priority: 'medium',
-                    assignee: null,
-                    dueDate: null,
-                    tags: ['backend'],
-                  },
-                  subIssues: [],
+                  title:
+                    'Can you confirm that the dictionary is used during recognize?',
+                  summary:
+                    'Verify dictionary-backed recognition and document the actual recognition path used by the feature.',
+                  tags: ['backend'],
                   warnings: [],
                 }),
               },

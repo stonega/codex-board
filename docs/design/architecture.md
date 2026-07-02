@@ -47,7 +47,7 @@ The first working pipeline now produces:
 - `rollout files`: raw `.jsonl` records under `~/.codex/sessions`
 - `thread candidates`: normalized threads with filtered text, timestamps, and Git evidence
 - `projects`: inferred groupings derived from repository/workspace metadata
-- `issues`: parent issues plus optional sub-issues
+- `issues`: one imported issue per Codex thread, with optional image evidence
 - `sync runs`: temporary full-resync diagnostics
   - manual and onboarding runs scan the current rollout set and reparse only new, changed, removed, or parser-fingerprint-changed files
   - first-run onboarding can cap the initial scan to the latest 100 rollout files; subsequent manual syncs scan the full rollout set

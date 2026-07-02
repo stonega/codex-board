@@ -1,15 +1,4 @@
-export type IssueStatus =
-  | 'todo'
-  | 'in_progress'
-  | 'blocked'
-  | 'done'
-  | 'unknown';
-
-export type IssuePriority = 'low' | 'medium' | 'high' | 'urgent' | 'unknown';
-
 export type ParseMode = 'ai' | 'fallback';
-
-export type IssueKind = 'parent' | 'sub_issue';
 
 export interface IssueCommitRef {
   sha: string;
@@ -33,27 +22,56 @@ export interface IssueEvidence {
   parsePayloadPreview: string;
 }
 
+export type ThreadImageRole = 'user' | 'assistant' | 'tool';
+
+export type ThreadImageSourceType =
+  | 'inline_data'
+  | 'file_path'
+  | 'url'
+  | 'elided';
+
+export interface ThreadImage {
+  id: string;
+  issueId: string;
+  threadId: string;
+  role: ThreadImageRole;
+  messageIndex: number;
+  partIndex: number;
+  sourceType: ThreadImageSourceType;
+  mimeType: string | null;
+  filename: string | null;
+  originalUrl: string | null;
+  localPath: string | null;
+  width: number | null;
+  height: number | null;
+  sizeBytes: number | null;
+  caption: string | null;
+  messageExcerpt: string | null;
+  createdAt: string | null;
+}
+
+export interface IssueStats {
+  messageCount: number;
+  commandCount: number;
+  imageCount: number;
+}
+
 export interface ParsedIssue {
   id: string;
   threadId: string;
   projectId: string;
-  parentIssueId: string | null;
-  kind: IssueKind;
   title: string;
-  status: IssueStatus;
-  priority: IssuePriority;
-  assignee: string | null;
-  dueDate: string | null;
   tags: string[];
   summary: string;
+  startedAt: string;
   updatedAt: string;
   parseMode: ParseMode;
   confidence: number;
   needsReview: boolean;
   git: IssueGitEvidence;
   evidence: IssueEvidence;
-  subIssueCount: number;
-  children?: ParsedIssue[];
+  stats: IssueStats;
+  images?: ThreadImage[];
 }
 
 export interface ProjectSummary {
@@ -62,7 +80,6 @@ export interface ProjectSummary {
   repository: string;
   workspacePath: string;
   issueCount: number;
-  subIssueCount: number;
   needsReviewCount: number;
   lastUpdatedAt: string;
 }
@@ -272,12 +289,11 @@ export interface SavedView {
 }
 
 export interface IssueFilters {
-  status?: IssueStatus | 'all';
-  priority?: IssuePriority | 'all';
   parseMode?: ParseMode | 'all';
   needsReview?: boolean;
   hasCommits?: boolean;
   hasTags?: boolean;
+  hasImages?: boolean;
   tag?: string | null;
   query?: string | null;
 }
@@ -435,37 +451,6 @@ export interface IssueReviewPayload {
   needsReview: boolean;
 }
 
-export interface IssueMergePayload {
-  targetIssueId: string;
-}
-
-export interface IssueSplitPayload {
-  children: Array<{
-    title: string;
-    summary?: string;
-    status?: IssueStatus;
-    priority?: IssuePriority;
-    tags?: string[];
-  }>;
-}
-
-const STATUS_KEYWORDS: Array<{ pattern: RegExp; value: IssueStatus }> = [
-  { pattern: /\b(done|fixed|merged|released|shipped)\b/i, value: 'done' },
-  { pattern: /\b(blocked|waiting|stuck|cannot)\b/i, value: 'blocked' },
-  {
-    pattern: /\b(progress|working|implement|building|syncing)\b/i,
-    value: 'in_progress',
-  },
-  { pattern: /\b(todo|next|follow-up|follow up|need to)\b/i, value: 'todo' },
-];
-
-const PRIORITY_KEYWORDS: Array<{ pattern: RegExp; value: IssuePriority }> = [
-  { pattern: /\b(urgent|p0|sev0|sev1|critical)\b/i, value: 'urgent' },
-  { pattern: /\b(high|important|asap|blocking)\b/i, value: 'high' },
-  { pattern: /\b(medium|normal)\b/i, value: 'medium' },
-  { pattern: /\b(low|nice to have|later)\b/i, value: 'low' },
-];
-
 export function slugify(value: string): string {
   return value
     .trim()
@@ -494,26 +479,6 @@ export function inferProjectName(
   return workspacePath.split('/').filter(Boolean).at(-1) ?? 'unknown-project';
 }
 
-export function inferIssueStatus(content: string): IssueStatus {
-  for (const keyword of STATUS_KEYWORDS) {
-    if (keyword.pattern.test(content)) {
-      return keyword.value;
-    }
-  }
-
-  return 'unknown';
-}
-
-export function inferIssuePriority(content: string): IssuePriority {
-  for (const keyword of PRIORITY_KEYWORDS) {
-    if (keyword.pattern.test(content)) {
-      return keyword.value;
-    }
-  }
-
-  return 'unknown';
-}
-
 export function normalizeTags(tags: string[]): string[] {
   return Array.from(
     new Set(
@@ -531,17 +496,17 @@ export function clampConfidence(value: number): number {
 
 export function scoreConfidence(input: {
   parseMode: ParseMode;
-  unknownFields: number;
   gitSignals: number;
-  subIssueCount: number;
+  messageCount: number;
+  imageCount: number;
   hasWarnings: boolean;
 }): number {
   const base = input.parseMode === 'ai' ? 0.72 : 0.46;
   const score =
     base +
     Math.min(input.gitSignals, 4) * 0.05 +
-    Math.min(input.subIssueCount, 4) * 0.02 -
-    Math.min(input.unknownFields, 4) * 0.08 -
+    Math.min(input.messageCount, 6) * 0.015 +
+    Math.min(input.imageCount, 4) * 0.015 -
     (input.hasWarnings ? 0.14 : 0);
 
   return clampConfidence(score);
@@ -551,12 +516,10 @@ export function shouldNeedsReview(input: {
   parseMode: ParseMode;
   confidence: number;
   warnings: string[];
-  unknownFields: number;
 }): boolean {
   return (
     input.parseMode === 'fallback' ||
     input.confidence < 0.6 ||
-    input.warnings.length > 0 ||
-    input.unknownFields >= 2
+    input.warnings.length > 0
   );
 }

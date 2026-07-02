@@ -18,7 +18,6 @@ function createProject(projectId: string): ProjectSummary {
     repository: 'codex-boards',
     workspacePath: '/tmp/codex-boards-fixture',
     issueCount: 1,
-    subIssueCount: 1,
     needsReviewCount: 0,
     lastUpdatedAt: '2026-04-09T00:00:00.000Z',
   };
@@ -31,15 +30,10 @@ function createIssue(
     id: overrides.id,
     threadId: overrides.threadId ?? 'thread-1',
     projectId: overrides.projectId ?? 'codex-boards',
-    parentIssueId: overrides.parentIssueId ?? null,
-    kind: overrides.kind ?? 'parent',
     title: overrides.title,
-    status: overrides.status ?? 'todo',
-    priority: overrides.priority ?? 'high',
-    assignee: overrides.assignee ?? 'stone',
-    dueDate: overrides.dueDate ?? '2026-04-20T10:00:00.000Z',
     tags: overrides.tags ?? ['backend', 'sync'],
     summary: overrides.summary ?? 'Build the Multica export command.',
+    startedAt: overrides.startedAt ?? '2026-04-09T00:00:00.000Z',
     updatedAt: overrides.updatedAt ?? '2026-04-09T00:00:00.000Z',
     parseMode: overrides.parseMode ?? 'fallback',
     confidence: overrides.confidence ?? 0.78,
@@ -64,8 +58,12 @@ function createIssue(
       warnings: [],
       parsePayloadPreview: 'preview',
     },
-    subIssueCount: overrides.subIssueCount ?? 0,
-    children: overrides.children ?? [],
+    stats: overrides.stats ?? {
+      messageCount: 2,
+      commandCount: 1,
+      imageCount: 0,
+    },
+    images: overrides.images ?? [],
   };
 }
 
@@ -121,7 +119,7 @@ describe('backend cli', () => {
     expect(description).toContain('- abc1234 - Add multica export command');
   });
 
-  test('exports parent and child issues to multica in order', async () => {
+  test('exports thread issues to multica in order', async () => {
     const root = `/tmp/codex-boards-cli-${Date.now()}`;
     mkdirSync(root, { recursive: true });
     const database = new BoardsDatabase(join(root, 'boards.sqlite'));
@@ -130,18 +128,18 @@ describe('backend cli', () => {
       database.upsertProject(createProject('codex-boards'));
       database.upsertIssue(
         createIssue({
-          id: 'parent-1',
+          id: 'issue-1',
           title: 'Export issues to Multica',
-          subIssueCount: 1,
+          updatedAt: '2026-04-10T00:00:00.000Z',
         }),
       );
       database.upsertIssue(
         createIssue({
-          id: 'child-1',
-          title: 'Create child issue in Multica',
-          kind: 'sub_issue',
-          parentIssueId: 'parent-1',
+          id: 'issue-2',
+          threadId: 'thread-2',
+          title: 'Export another issue in Multica',
           projectId: 'codex-boards',
+          updatedAt: '2026-04-09T00:00:00.000Z',
         }),
       );
 
@@ -160,14 +158,14 @@ describe('backend cli', () => {
           if (commands.length === 1) {
             return {
               exitCode: 0,
-              stdout: JSON.stringify({ id: 'multica-parent-1' }),
+              stdout: JSON.stringify({ id: 'multica-issue-1' }),
               stderr: '',
             };
           }
 
           return {
             exitCode: 0,
-            stdout: JSON.stringify({ id: 'multica-child-1' }),
+            stdout: JSON.stringify({ id: 'multica-issue-2' }),
             stderr: '',
           };
         },
@@ -176,11 +174,10 @@ describe('backend cli', () => {
       expect(commands).toHaveLength(2);
       expect(commands[0]).toContain('--title');
       expect(commands[0]).toContain('Export issues to Multica');
-      expect(commands[1]).toContain('--parent');
-      expect(commands[1]).toContain('multica-parent-1');
+      expect(commands[1]).not.toContain('--parent');
       expect(result.exported.map((entry) => entry.multicaIssueId)).toEqual([
-        'multica-parent-1',
-        'multica-child-1',
+        'multica-issue-1',
+        'multica-issue-2',
       ]);
       expect(result.skippedChildren).toEqual([]);
     } finally {
@@ -189,8 +186,8 @@ describe('backend cli', () => {
     }
   });
 
-  test('retries without assignee when multica cannot resolve it', async () => {
-    const root = `/tmp/codex-boards-cli-retry-${Date.now()}`;
+  test('does not emit task-tracker fields for multica export', async () => {
+    const root = `/tmp/codex-boards-cli-flat-${Date.now()}`;
     mkdirSync(root, { recursive: true });
     const database = new BoardsDatabase(join(root, 'boards.sqlite'));
 
@@ -200,7 +197,6 @@ describe('backend cli', () => {
         createIssue({
           id: 'parent-1',
           title: 'Export issues to Multica',
-          assignee: 'stone',
         }),
       );
 
@@ -217,15 +213,6 @@ describe('backend cli', () => {
         async (args) => {
           commands.push(args);
 
-          if (commands.length === 1) {
-            return {
-              exitCode: 1,
-              stdout: '',
-              stderr:
-                'Error: resolve assignee: no member or agent found matching "stone"',
-            };
-          }
-
           return {
             exitCode: 0,
             stdout: JSON.stringify({ id: 'multica-parent-1' }),
@@ -234,9 +221,11 @@ describe('backend cli', () => {
         },
       );
 
-      expect(commands).toHaveLength(2);
-      expect(commands[0]).toContain('--assignee');
-      expect(commands[1]).not.toContain('--assignee');
+      expect(commands).toHaveLength(1);
+      expect(commands[0]).not.toContain('--status');
+      expect(commands[0]).not.toContain('--priority');
+      expect(commands[0]).not.toContain('--assignee');
+      expect(commands[0]).not.toContain('--due-date');
       expect(result.exported[0]?.multicaIssueId).toBe('multica-parent-1');
     } finally {
       database.close();

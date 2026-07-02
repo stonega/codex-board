@@ -63,7 +63,7 @@ Export issues to Multica:
 bun run --filter @codex-boards/backend start -- issues export multica --project codex-boards
 ```
 
-The export command runs a sync first by default, then creates one Multica issue per parent issue and, unless `--no-children` is set, creates sub-issues under the exported Multica parent. Use `--dry-run` to inspect the generated `multica issue create` commands and `--skip-sync` when you want to export the current SQLite snapshot as-is.
+The export command runs a sync first by default, then creates one Multica issue per imported thread issue. Use `--dry-run` to inspect the generated `multica issue create` commands and `--skip-sync` when you want to export the current SQLite snapshot as-is. The legacy `--no-children` flag is accepted for compatibility, but imported thread issues no longer have children.
 
 Optional parser configuration:
 
@@ -119,8 +119,8 @@ You can also inspect and update the runtime parser settings from the web app's S
 The native GNOME app lives in `apps/gnome` and mirrors the current desktop feature surface:
 
 - project navigation and saved views
-- issue search, status, priority, parse mode, review, commit, and tag filters
-- issue detail windows with review toggling, Git evidence, traceability, warnings, parse preview, and sub-issues
+- issue search, parse mode, review, image, commit, and tag filters
+- issue detail windows with review toggling, image evidence, Git evidence, traceability, warnings, and parse preview
 - parser settings with Gemini and OpenRouter presets
 - sync history
 - manual sync and Multica export
@@ -148,7 +148,6 @@ The Flatpak manifest uses `org.gnome.Platform` and `org.gnome.Sdk` with runtime 
 ## Current limitations
 
 - Diff-heavy and policy-heavy content is intentionally excluded before parsing
-- Assignee and due date remain null unless the thread states them clearly
-- Manual merge/split correction endpoints are intentionally lightweight in v1
+- Inline image blobs are recorded as metadata only; retrievable previews depend on URL or file references surviving in the rollout
 - Desktop packaging currently targets macOS and Linux first
 - Flatpak Multica export depends on a usable `multica` command inside the package or sandbox environment

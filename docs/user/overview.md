@@ -9,13 +9,14 @@ The current workflow is:
 3. Scan rollout files under `~/.codex/sessions`
 4. Keep only threads with Git workspace evidence
 5. Truncate thread content to a cheap parse payload
-6. Extract parent issues and optional sub-issues
-7. Persist issues, Git evidence, and sync diagnostics in SQLite
+6. Extract one issue per thread and collect image references
+7. Persist issues, image evidence, Git evidence, and sync diagnostics in SQLite
 8. Browse them in a Notion-style web/desktop workspace or a native GNOME workspace with projects, filters, saved views, and issue details
 
 The UI emphasizes reviewability:
 
 - every issue includes rollout path and thread id
+- image references detected in the thread are shown in the detail sheet
 - low-confidence parses are flagged for review
 - commit and tag evidence are shown when present
 - each sync run shows a per-file parse log for imported, skipped, and failed rollouts
@@ -28,4 +29,4 @@ After the first completed sync, the backend checks for rollout changes in the ba
 
 Usage charts read aggregate token counters from local Codex logs, including archived sessions. The usage API returns both the selected interval summary and an all-device total from the local index; the Usage page reads that `total` value for the all-device card rows and can fall back to `GET /api/usage?range=all-time` when needed. The usage index refreshes automatically after sync runs. Estimated fees use bundled standard pricing defaults for known models, and a local `usage-pricing.json` file can add or override rates. Unpriced models remain visible instead of being hidden from totals.
 
-The native GNOME app provides the same core workflows with GTK/libadwaita controls: project navigation, saved views, filtering, sync, parser settings, sync history, review toggles, traceability details, sub-issues, and Multica export.
+The native GNOME app provides the same core workflows with GTK/libadwaita controls: project navigation, saved views, filtering, sync, parser settings, sync history, review toggles, traceability details, and Multica export.

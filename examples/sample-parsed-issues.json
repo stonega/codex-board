@@ -7,29 +7,43 @@
   },
   "issues": [
     {
-      "id": "codex-boards:thread-abc:parent",
-      "kind": "parent",
+      "id": "codex-boards:thread-abc",
+      "threadId": "thread-abc",
+      "projectId": "codex-boards",
       "title": "Build Codex thread sync service",
-      "status": "in_progress",
-      "priority": "high",
-      "tags": ["backend", "has-commit", "has-tag"],
-      "subIssueCount": 2
-    },
-    {
-      "id": "codex-boards:thread-abc:sub-1",
-      "kind": "sub_issue",
-      "parentIssueId": "codex-boards:thread-abc:parent",
-      "title": "Persist parsed issues in SQLite",
-      "status": "todo",
-      "priority": "high"
-    },
-    {
-      "id": "codex-boards:thread-abc:sub-2",
-      "kind": "sub_issue",
-      "parentIssueId": "codex-boards:thread-abc:parent",
-      "title": "Ship Notion-style issue table and detail sheet",
-      "status": "todo",
-      "priority": "medium"
+      "summary": "Build the local thread sync service, persist one issue per Codex thread, and show thread details in the web UI.",
+      "tags": ["backend", "sync", "has-commit", "has-tag"],
+      "startedAt": "2026-04-05T04:59:00.000Z",
+      "updatedAt": "2026-04-05T05:12:00.000Z",
+      "parseMode": "ai",
+      "confidence": 0.87,
+      "needsReview": false,
+      "stats": {
+        "messageCount": 4,
+        "commandCount": 2,
+        "imageCount": 1
+      },
+      "images": [
+        {
+          "id": "codex-boards:thread-abc:image-1",
+          "issueId": "codex-boards:thread-abc",
+          "threadId": "thread-abc",
+          "role": "user",
+          "messageIndex": 0,
+          "partIndex": 0,
+          "sourceType": "url",
+          "mimeType": "image/png",
+          "filename": "thread-sync-sketch.png",
+          "originalUrl": "https://example.com/thread-sync-sketch.png",
+          "localPath": null,
+          "width": null,
+          "height": null,
+          "sizeBytes": null,
+          "caption": "Thread sync sketch",
+          "messageExcerpt": "Build a sync service for the board.",
+          "createdAt": "2026-04-05T05:00:00.000Z"
+        }
+      ]
     }
   ]
 }

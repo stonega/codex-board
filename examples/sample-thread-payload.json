@@ -2,6 +2,6 @@
   "threadId": "thread-abc",
   "projectId": "codex-boards",
   "titleHint": "Build a sync service for the board",
-  "preview": "Repository: codex-boards\nWorkspace: /home/stone/Web/codex-boards\nBranch: feat/thread-sync\nCommits: 9f31c2edc0f\nTags: v0.1.0\n\nUSER:\nBuild a sync service for the board.\n- Extract git commit info\n- Save issues into sqlite\n- Show a notion like table",
-  "content": "Repository: codex-boards\nWorkspace: /home/stone/Web/codex-boards\nBranch: feat/thread-sync\nCommits: 9f31c2edc0f\nTags: v0.1.0\n\nUSER:\nBuild a sync service for the board.\n- Extract git commit info\n- Save issues into sqlite\n- Show a notion like table\n\nASSISTANT:\nI will build the sync service, expose the API, and add the issue table detail sheet."
+  "preview": "Repository: codex-boards\nWorkspace: /home/stone/Web/codex-boards\nBranch: feat/thread-sync\nCommits: 9f31c2edc0f\nTags: v0.1.0\nImages: 1\n\nUSER:\nBuild a sync service for the board.\n- Extract git commit info\n- Save issues into sqlite\n- Show a notion like table\n![Thread sync sketch](https://example.com/thread-sync-sketch.png)",
+  "content": "Repository: codex-boards\nWorkspace: /home/stone/Web/codex-boards\nBranch: feat/thread-sync\nCommits: 9f31c2edc0f\nTags: v0.1.0\nImages: 1\n\nUSER:\nBuild a sync service for the board.\n- Extract git commit info\n- Save issues into sqlite\n- Show a notion like table\n![Thread sync sketch](https://example.com/thread-sync-sketch.png)\n\nASSISTANT:\nI will build the sync service, expose the API, and add the issue table detail sheet."
 }

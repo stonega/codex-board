@@ -28,7 +28,6 @@ function createProject(workspacePath: string): ProjectSummary {
     repository: 'codex-boards',
     workspacePath,
     issueCount: 0,
-    subIssueCount: 0,
     needsReviewCount: 0,
     lastUpdatedAt: '2026-04-09T00:00:00.000Z',
   };
@@ -174,7 +173,6 @@ describe('skill api', () => {
         repository: 'codex-boards',
         workspacePath: projectWorkspace,
         issueCount: 0,
-        subIssueCount: 0,
         needsReviewCount: 0,
         lastUpdatedAt: '2026-04-09T00:00:00.000Z',
       });

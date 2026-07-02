@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   existsSync,
   mkdtempSync,
@@ -13,15 +14,12 @@ import { basename, dirname, join } from 'node:path';
 import {
   type IssueCommitRef,
   type IssueGitEvidence,
-  type IssuePriority,
-  type IssueStatus,
   type ParseMode,
   type ParsedIssue,
   type ParserProvider,
   type ProjectSummary,
   type SyncTokenUsage,
-  inferIssuePriority,
-  inferIssueStatus,
+  type ThreadImage,
   inferProjectId,
   inferProjectName,
   normalizeTags,
@@ -42,6 +40,8 @@ export interface ThreadMessage {
   content: string;
 }
 
+type ThreadImageCandidate = Omit<ThreadImage, 'id' | 'issueId'>;
+
 export interface ThreadCandidate {
   sessionId: string;
   threadId: string;
@@ -53,6 +53,7 @@ export interface ThreadCandidate {
   branch: string | null;
   messages: ThreadMessage[];
   commands: string[];
+  images: ThreadImageCandidate[];
   warnings: string[];
   git: IssueGitEvidence;
 }
@@ -64,22 +65,9 @@ export interface ParsePayload {
 }
 
 interface AiParseResult {
-  parent: {
-    title: string;
-    summary: string;
-    status?: IssueStatus;
-    priority?: IssuePriority;
-    assignee?: string | null;
-    dueDate?: string | null;
-    tags?: string[];
-  };
-  subIssues: Array<{
-    title: string;
-    summary: string;
-    status?: IssueStatus;
-    priority?: IssuePriority;
-    tags?: string[];
-  }>;
+  title: string;
+  summary: string;
+  tags?: string[];
   warnings?: string[];
 }
 
@@ -182,6 +170,342 @@ function extractTextContent(payload: unknown): string[] {
       return [];
     })
     .filter(Boolean);
+}
+
+function stableHash(value: string): string {
+  return createHash('sha256').update(value).digest('hex').slice(0, 16);
+}
+
+function estimateDataUrlBytes(value: string): number | null {
+  const match = value.match(/^data:[^;]+;base64,([a-z0-9+/=\s]+)$/i);
+  if (!match?.[1]) {
+    return null;
+  }
+
+  const normalized = match[1].replace(/\s+/g, '');
+  const padding = normalized.endsWith('==')
+    ? 2
+    : normalized.endsWith('=')
+      ? 1
+      : 0;
+  return Math.max(0, Math.floor((normalized.length * 3) / 4) - padding);
+}
+
+function imageSourceType(value: string): ThreadImage['sourceType'] | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  if (
+    /^remodex:\/\/history-image-elided/i.test(trimmed) ||
+    /\bimage[-_\s]+elided\b/i.test(trimmed)
+  ) {
+    return 'elided';
+  }
+
+  if (/^data:image\/[a-z0-9.+-]+;base64,/i.test(trimmed)) {
+    return 'inline_data';
+  }
+
+  if (
+    /^https?:\/\/\S+\.(?:png|jpe?g|gif|webp|avif|bmp|svg)(?:[?#]\S*)?$/i.test(
+      trimmed,
+    )
+  ) {
+    return 'url';
+  }
+
+  if (/^https?:\/\/\S+$/i.test(trimmed) && /\bimage\b/i.test(trimmed)) {
+    return 'url';
+  }
+
+  if (
+    /^(?:file:\/\/)?(?:\/|~\/|\.{1,2}\/).+\.(?:png|jpe?g|gif|webp|avif|bmp|svg)$/i.test(
+      trimmed,
+    )
+  ) {
+    return 'file_path';
+  }
+
+  return null;
+}
+
+function mimeTypeFromImageSource(value: string): string | null {
+  const dataUrl = value.match(/^data:([^;]+);base64,/i);
+  if (dataUrl?.[1]) {
+    return dataUrl[1].toLowerCase();
+  }
+
+  const extension = value
+    .split(/[?#]/)[0]
+    ?.match(/\.([a-z0-9]+)$/i)?.[1]
+    ?.toLowerCase();
+
+  if (!extension) {
+    return null;
+  }
+
+  const mimeByExtension: Record<string, string> = {
+    avif: 'image/avif',
+    bmp: 'image/bmp',
+    gif: 'image/gif',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    png: 'image/png',
+    svg: 'image/svg+xml',
+    webp: 'image/webp',
+  };
+
+  return mimeByExtension[extension] ?? null;
+}
+
+function filenameFromImageSource(value: string): string | null {
+  if (/^data:/i.test(value) || /^remodex:\/\//i.test(value)) {
+    return null;
+  }
+
+  const cleaned = value
+    .replace(/^file:\/\//i, '')
+    .split(/[?#]/)[0]
+    ?.trim();
+  if (!cleaned) {
+    return null;
+  }
+
+  const name = basename(cleaned);
+  return name && name !== cleaned ? name : name || null;
+}
+
+function messageExcerpt(value: string): string | null {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  if (!normalized) {
+    return null;
+  }
+
+  return normalized.slice(0, 180);
+}
+
+function buildImageCandidate(params: {
+  threadId: string;
+  role: ThreadImage['role'];
+  messageIndex: number;
+  partIndex: number;
+  source: string;
+  caption?: string | null;
+  excerpt?: string | null;
+  createdAt?: string | null;
+  width?: unknown;
+  height?: unknown;
+}): ThreadImageCandidate | null {
+  const source = params.source.trim();
+  const sourceType = imageSourceType(source);
+  if (!sourceType) {
+    return null;
+  }
+
+  const width = Number(params.width);
+  const height = Number(params.height);
+
+  return {
+    threadId: params.threadId,
+    role: params.role,
+    messageIndex: params.messageIndex,
+    partIndex: params.partIndex,
+    sourceType,
+    mimeType: mimeTypeFromImageSource(source),
+    filename: filenameFromImageSource(source),
+    originalUrl:
+      sourceType === 'url' || sourceType === 'elided' ? source : null,
+    localPath:
+      sourceType === 'file_path' ? source.replace(/^file:\/\//i, '') : null,
+    width: Number.isFinite(width) && width > 0 ? width : null,
+    height: Number.isFinite(height) && height > 0 ? height : null,
+    sizeBytes:
+      sourceType === 'inline_data' ? estimateDataUrlBytes(source) : null,
+    caption: params.caption?.trim() || null,
+    messageExcerpt: messageExcerpt(params.excerpt ?? ''),
+    createdAt: params.createdAt ?? null,
+  };
+}
+
+function extractImageSourcesFromText(value: string): Array<{
+  source: string;
+  caption: string | null;
+}> {
+  const sources: Array<{ source: string; caption: string | null }> = [];
+
+  for (const match of value.matchAll(/!\[([^\]]*)\]\(([^)]+)\)/g)) {
+    if (match[2]) {
+      sources.push({
+        source: match[2].trim(),
+        caption: match[1]?.trim() || null,
+      });
+    }
+  }
+
+  for (const match of value.matchAll(
+    /\b(?:https?:\/\/|file:\/\/|remodex:\/\/history-image-elided)\S+/gi,
+  )) {
+    sources.push({ source: match[0].trim(), caption: null });
+  }
+
+  for (const match of value.matchAll(
+    /(?:^|\s)((?:\/|~\/|\.{1,2}\/)[^\s'"()<>]+\.(?:png|jpe?g|gif|webp|avif|bmp|svg))(?:\s|$)/gi,
+  )) {
+    if (match[1]) {
+      sources.push({ source: match[1].trim(), caption: null });
+    }
+  }
+
+  if (/\bimage[-_\s]+elided\b/i.test(value)) {
+    sources.push({ source: 'remodex://history-image-elided', caption: null });
+  }
+
+  return sources;
+}
+
+function extractImagesFromText(params: {
+  threadId: string;
+  role: ThreadImage['role'];
+  messageIndex: number;
+  partIndexStart: number;
+  text: string;
+  createdAt?: string | null;
+}): ThreadImageCandidate[] {
+  return extractImageSourcesFromText(params.text).flatMap((entry, index) => {
+    const image = buildImageCandidate({
+      threadId: params.threadId,
+      role: params.role,
+      messageIndex: params.messageIndex,
+      partIndex: params.partIndexStart + index,
+      source: entry.source,
+      caption: entry.caption,
+      excerpt: params.text,
+      createdAt: params.createdAt,
+    });
+    return image ? [image] : [];
+  });
+}
+
+function readImageSourceFromPart(part: Record<string, unknown>): string | null {
+  for (const key of [
+    'image_url',
+    'imageUrl',
+    'url',
+    'path',
+    'file_path',
+    'filePath',
+    'data',
+  ]) {
+    const value = part[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value;
+    }
+  }
+
+  const imageUrl = part.image_url ?? part.imageUrl;
+  if (imageUrl && typeof imageUrl === 'object') {
+    const nested = imageUrl as { url?: unknown; path?: unknown };
+    if (typeof nested.url === 'string' && nested.url.trim()) {
+      return nested.url;
+    }
+    if (typeof nested.path === 'string' && nested.path.trim()) {
+      return nested.path;
+    }
+  }
+
+  return null;
+}
+
+function extractImagesFromPayload(params: {
+  threadId: string;
+  role: ThreadImage['role'];
+  messageIndex: number;
+  payload: unknown;
+  createdAt?: string | null;
+}): ThreadImageCandidate[] {
+  if (!params.payload || typeof params.payload !== 'object') {
+    return [];
+  }
+
+  const content = (params.payload as { content?: unknown }).content;
+  if (!Array.isArray(content)) {
+    return [];
+  }
+
+  const images: ThreadImageCandidate[] = [];
+
+  content.forEach((part, partIndex) => {
+    if (!part || typeof part !== 'object') {
+      return;
+    }
+
+    const typedPart = part as Record<string, unknown>;
+    const partType = String(typedPart.type ?? '');
+    const source = readImageSourceFromPart(typedPart);
+
+    if (source && /\bimage\b/i.test(partType)) {
+      const image = buildImageCandidate({
+        threadId: params.threadId,
+        role: params.role,
+        messageIndex: params.messageIndex,
+        partIndex,
+        source,
+        caption:
+          typeof typedPart.caption === 'string' ? typedPart.caption : null,
+        excerpt: typeof typedPart.text === 'string' ? typedPart.text : source,
+        createdAt: params.createdAt,
+        width: typedPart.width,
+        height: typedPart.height,
+      });
+      if (image) {
+        images.push(image);
+      }
+    }
+
+    if (typeof typedPart.text === 'string') {
+      images.push(
+        ...extractImagesFromText({
+          threadId: params.threadId,
+          role: params.role,
+          messageIndex: params.messageIndex,
+          partIndexStart: partIndex + 1000,
+          text: typedPart.text,
+          createdAt: params.createdAt,
+        }),
+      );
+    }
+  });
+
+  return images;
+}
+
+function dedupeImages(images: ThreadImageCandidate[]): ThreadImageCandidate[] {
+  const seen = new Set<string>();
+  const output: ThreadImageCandidate[] = [];
+
+  for (const image of images) {
+    const key = [
+      image.threadId,
+      image.role,
+      image.messageIndex,
+      image.sourceType,
+      image.originalUrl,
+      image.localPath,
+      image.filename,
+      image.mimeType,
+    ].join(':');
+
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    output.push(image);
+  }
+
+  return output;
 }
 
 function stripCodeBlocks(value: string): string {
@@ -505,6 +829,7 @@ export function parseRolloutFile(file: RolloutFile): ThreadCandidate | null {
   let workspacePath = '';
   const messages: ThreadMessage[] = [];
   const commands: string[] = [];
+  const images: ThreadImageCandidate[] = [];
   const warnings: string[] = [];
   const gitTextPool: string[] = grepGitSignals(file.path);
 
@@ -534,6 +859,17 @@ export function parseRolloutFile(file: RolloutFile): ThreadCandidate | null {
         if (!shouldKeepMessage('user', content)) {
           continue;
         }
+        const messageIndex = messages.length;
+        images.push(
+          ...extractImagesFromText({
+            threadId: sessionId,
+            role: 'user',
+            messageIndex,
+            partIndexStart: 0,
+            text: String(parsed.payload.message),
+            createdAt: parsed.timestamp ?? null,
+          }),
+        );
         messages.push({
           role: 'user',
           content,
@@ -545,6 +881,17 @@ export function parseRolloutFile(file: RolloutFile): ThreadCandidate | null {
         if (!shouldKeepMessage('assistant', content)) {
           continue;
         }
+        const messageIndex = messages.length;
+        images.push(
+          ...extractImagesFromText({
+            threadId: sessionId,
+            role: 'assistant',
+            messageIndex,
+            partIndexStart: 0,
+            text: String(parsed.payload.message),
+            createdAt: parsed.timestamp ?? null,
+          }),
+        );
         messages.push({
           role: 'assistant',
           content,
@@ -562,15 +909,36 @@ export function parseRolloutFile(file: RolloutFile): ThreadCandidate | null {
         if (/\bgit\b/i.test(command)) {
           gitTextPool.push(command, output);
         }
+        images.push(
+          ...extractImagesFromText({
+            threadId: sessionId,
+            role: 'tool',
+            messageIndex: messages.length + commands.length,
+            partIndexStart: 0,
+            text: `${command}\n${output}`,
+            createdAt: parsed.timestamp ?? null,
+          }),
+        );
       }
     }
 
     if (parsed.type === 'response_item') {
       if (parsed.payload?.type === 'message') {
         const role = parsed.payload?.role === 'user' ? 'user' : 'assistant';
+        const messageIndex = messages.length;
+        const payloadImages = extractImagesFromPayload({
+          threadId: sessionId,
+          role,
+          messageIndex,
+          payload: parsed.payload,
+          createdAt: parsed.timestamp ?? null,
+        });
         const text = sanitizeMessageContent(
           extractTextContent(parsed.payload).join('\n'),
         );
+        if (payloadImages.length > 0) {
+          images.push(...payloadImages);
+        }
         if (text.trim()) {
           if (!shouldKeepMessage(role, text)) {
             continue;
@@ -640,6 +1008,12 @@ export function parseRolloutFile(file: RolloutFile): ThreadCandidate | null {
     branch,
     messages: focusedMessages,
     commands,
+    images: dedupeImages(
+      images.map((image) => ({
+        ...image,
+        threadId: sessionId,
+      })),
+    ),
     warnings,
     git: {
       repository: repository || inferProjectName('', workspacePath),
@@ -671,6 +1045,7 @@ export function buildParsePayload(candidate: ThreadCandidate): ParsePayload {
     `Branch: ${candidate.git.branch ?? 'unknown'}`,
     `Commits: ${candidate.git.commits.map((commit) => commit.sha).join(', ') || 'none'}`,
     `Tags: ${candidate.git.tags.join(', ') || 'none'}`,
+    `Images: ${candidate.images.length}`,
   ].join('\n');
 
   const titleHint = buildFallbackTitle(
@@ -711,76 +1086,71 @@ function buildIssue(params: {
   project: ProjectSummary;
   candidate: ThreadCandidate;
   payloadPreview: string;
-  kind: 'parent' | 'sub_issue';
-  parentIssueId: string | null;
   parseMode: ParseMode;
   warnings: string[];
   title: string;
   summary: string;
-  status?: IssueStatus;
-  priority?: IssuePriority;
-  assignee?: string | null;
-  dueDate?: string | null;
   tags?: string[];
-  subIssueCount: number;
-  suffix: string;
 }): ParsedIssue {
   const combinedText = `${params.title}\n${params.summary}`;
-  const status = params.status ?? inferIssueStatus(combinedText);
-  const priority = params.priority ?? inferIssuePriority(combinedText);
   const tags = normalizeTags(
     params.tags ?? fallbackTags(combinedText, params.candidate.git),
   );
-  const unknownFields = [
-    status === 'unknown',
-    priority === 'unknown',
-    !params.assignee,
-    !params.dueDate,
-  ].filter(Boolean).length;
   const confidence = scoreConfidence({
     parseMode: params.parseMode,
     gitSignals:
       Number(Boolean(params.candidate.git.branch)) +
       params.candidate.git.commits.length +
       params.candidate.git.tags.length,
-    subIssueCount: params.subIssueCount,
-    unknownFields,
+    messageCount: params.candidate.messages.length,
+    imageCount: params.candidate.images.length,
     hasWarnings: params.warnings.length > 0,
   });
-  const id = `${params.project.id}:${params.candidate.threadId}:${params.suffix}`;
+  const id = `${params.project.id}:${params.candidate.threadId}`;
+  const title = (() => {
+    const cleanedTitle = cleanIssueTitle(params.title);
+    const summaryTitle = titleFromSummary(params.summary);
+    const previewTitle = cleanIssueTitle(
+      params.payloadPreview.split('\n')[0] ?? '',
+    );
+
+    if (
+      params.parseMode === 'ai' &&
+      cleanedTitle &&
+      looksLikeRequestTitle(params.title)
+    ) {
+      return summaryTitle || previewTitle || cleanedTitle;
+    }
+
+    return cleanedTitle || summaryTitle || previewTitle || 'Untitled issue';
+  })();
+  const images = params.candidate.images.map((image, index) => ({
+    ...image,
+    id: `${id}:image-${stableHash(
+      [
+        image.role,
+        image.messageIndex,
+        image.partIndex,
+        image.sourceType,
+        image.originalUrl,
+        image.localPath,
+        image.filename,
+      ].join(':'),
+    )}-${index + 1}`,
+    issueId: id,
+  }));
 
   return {
     id,
     threadId: params.candidate.threadId,
     projectId: params.project.id,
-    parentIssueId: params.parentIssueId,
-    kind: params.kind,
-    title: (() => {
-      const cleanedTitle = cleanIssueTitle(params.title);
-      const summaryTitle = titleFromSummary(params.summary);
-      const previewTitle = cleanIssueTitle(
-        params.payloadPreview.split('\n')[0] ?? '',
-      );
-
-      if (
-        params.parseMode === 'ai' &&
-        cleanedTitle &&
-        looksLikeRequestTitle(params.title)
-      ) {
-        return summaryTitle || previewTitle || cleanedTitle;
-      }
-
-      return cleanedTitle || summaryTitle || previewTitle || 'Untitled issue';
-    })(),
-    status,
-    priority,
-    assignee: params.assignee ?? null,
-    dueDate: params.dueDate ?? null,
+    title,
     tags,
     summary:
       cleanIssueSummary(params.summary) ||
       cleanIssueSummary(params.payloadPreview) ||
       'No summary available.',
+    startedAt: params.candidate.startedAt,
     updatedAt: params.candidate.updatedAt,
     parseMode: params.parseMode,
     confidence,
@@ -788,7 +1158,6 @@ function buildIssue(params: {
       parseMode: params.parseMode,
       confidence,
       warnings: params.warnings,
-      unknownFields,
     }),
     git: params.candidate.git,
     evidence: {
@@ -798,8 +1167,12 @@ function buildIssue(params: {
       warnings: params.warnings,
       parsePayloadPreview: params.payloadPreview,
     },
-    subIssueCount: params.subIssueCount,
-    children: [],
+    stats: {
+      messageCount: params.candidate.messages.length,
+      commandCount: params.candidate.commands.length,
+      imageCount: images.length,
+    },
+    images,
   };
 }
 
@@ -807,27 +1180,16 @@ const AI_PARSE_SYSTEM_PROMPT = `You extract structured engineering issues from c
 
 Your task:
 - Read the thread carefully.
-- Infer the main parent issue that best represents the overall piece of work.
-- Infer zero or more sub-issues only when the thread clearly contains distinct actionable workstreams, deliverables, or milestones.
+- Produce one issue that represents the whole thread.
+- Do not split the thread into sub-issues.
 - Prefer accuracy and readability over exhaustiveness.
 
 Output contract:
 - Respond with valid JSON only.
-- Top-level keys must be exactly: parent, subIssues, warnings.
-- parent must be an object with:
-  - title
-  - summary
-  - status
-  - priority
-  - assignee
-  - dueDate
-  - tags
-- subIssues must be an array of objects with:
-  - title
-  - summary
-  - status
-  - priority
-  - tags
+- Top-level keys must be exactly: title, summary, tags, warnings.
+- title must be a concise string.
+- summary must be one or two short sentences.
+- tags must be an array of short strings.
 - warnings must be an array of short strings.
 
 Writing rules:
@@ -851,21 +1213,6 @@ Interpretation rules:
 - If there is clear evidence of a bug fix, title it like a bug fix.
 - If there is clear evidence of a feature addition, title it like a feature or capability.
 - If the thread is mostly infrastructure or refactoring work, title it accordingly.
-- Only create sub-issues when the thread contains clearly separable chunks of work.
-- Do not create sub-issues for trivial steps, logging chatter, or repeated rephrasings.
-
-Status and priority:
-- Choose the most plausible status from the thread content.
-- Use "done" only when the thread strongly indicates the work was completed.
-- Use "in_progress" when work is underway or described as being built.
-- Use "todo" when the work is mostly requested or planned.
-- Use "blocked" only when the thread clearly indicates a blocker.
-- Use "unknown" when status is genuinely unclear.
-- Infer priority conservatively from the thread wording.
-
-Assignee and due date:
-- Only set assignee or dueDate when explicitly stated or strongly implied.
-- Otherwise return null.
 
 Tags:
 - Return a short list of concrete, useful tags.
@@ -887,7 +1234,7 @@ function buildAiParseUserPrompt(
   payload: ParsePayload,
   candidate: ThreadCandidate,
 ): string {
-  return `Thread metadata:\nrepository=${candidate.git.repository}\nbranch=${candidate.git.branch ?? 'unknown'}\ncommits=${candidate.git.commits.map((commit) => commit.sha).join(', ') || 'none'}\ntags=${candidate.git.tags.join(', ') || 'none'}\n\nThread content:\n${payload.content}`;
+  return `Thread metadata:\nrepository=${candidate.git.repository}\nbranch=${candidate.git.branch ?? 'unknown'}\ncommits=${candidate.git.commits.map((commit) => commit.sha).join(', ') || 'none'}\ntags=${candidate.git.tags.join(', ') || 'none'}\nimages=${candidate.images.length}\n\nThread content:\n${payload.content}`;
 }
 
 function extractJsonObjectFromText(content: string): string {
@@ -1165,7 +1512,6 @@ export async function buildIssuesFromCandidate(
     repository: candidate.git.repository,
     workspacePath: candidate.git.workspacePath,
     issueCount: 0,
-    subIssueCount: 0,
     needsReviewCount: 0,
     lastUpdatedAt: candidate.updatedAt,
   };
@@ -1197,47 +1543,20 @@ export async function buildIssuesFromCandidate(
               model,
             });
 
-      const parent = buildIssue({
+      const issue = buildIssue({
         project,
         candidate,
         payloadPreview: payload.preview,
-        kind: 'parent',
-        parentIssueId: null,
         parseMode: 'ai',
         warnings: [...candidate.warnings, ...(ai.result.warnings ?? [])],
-        title: ai.result.parent.title || payload.titleHint,
-        summary: ai.result.parent.summary || payload.preview,
-        status: ai.result.parent.status,
-        priority: ai.result.parent.priority,
-        assignee: ai.result.parent.assignee,
-        dueDate: ai.result.parent.dueDate,
-        tags: ai.result.parent.tags,
-        subIssueCount: ai.result.subIssues.length,
-        suffix: 'parent',
+        title: ai.result.title || payload.titleHint,
+        summary: ai.result.summary || payload.preview,
+        tags: ai.result.tags,
       });
-
-      const children = ai.result.subIssues.map((subIssue, index) =>
-        buildIssue({
-          project,
-          candidate,
-          payloadPreview: payload.preview,
-          kind: 'sub_issue',
-          parentIssueId: parent.id,
-          parseMode: 'ai',
-          warnings: [...candidate.warnings, ...(ai.result.warnings ?? [])],
-          title: subIssue.title,
-          summary: subIssue.summary,
-          status: subIssue.status,
-          priority: subIssue.priority,
-          tags: subIssue.tags,
-          subIssueCount: 0,
-          suffix: `sub-${index + 1}`,
-        }),
-      );
 
       return {
         project,
-        issues: [parent, ...children],
+        issues: [issue],
         parseMode: 'ai',
         aiDiagnostics: {
           requestCount: 1,
@@ -1252,46 +1571,19 @@ export async function buildIssuesFromCandidate(
     }
   }
 
-  const parent = buildIssue({
+  const issue = buildIssue({
     project,
     candidate,
     payloadPreview: payload.preview,
-    kind: 'parent',
-    parentIssueId: null,
     parseMode: 'fallback',
     warnings: candidate.warnings,
     title: payload.titleHint,
     summary: buildFallbackSummary(candidate, payload.titleHint),
-    subIssueCount: 0,
-    suffix: 'parent',
   });
-
-  const bulletSubIssues = extractBulletItems(candidate.messages);
-
-  const children = bulletSubIssues.map((title, index) =>
-    buildIssue({
-      project,
-      candidate,
-      payloadPreview: payload.preview,
-      kind: 'sub_issue',
-      parentIssueId: parent.id,
-      parseMode: 'fallback',
-      warnings: [
-        ...candidate.warnings,
-        'Sub-issue created from structured thread bullets.',
-      ],
-      title,
-      summary: title,
-      subIssueCount: 0,
-      suffix: `sub-${index + 1}`,
-    }),
-  );
-
-  parent.subIssueCount = children.length;
 
   return {
     project,
-    issues: [parent, ...children],
+    issues: [issue],
     parseMode: 'fallback',
     aiDiagnostics: {
       requestCount: 0,

@@ -1345,7 +1345,7 @@ function ensureProjectSkillThreadSignals(
   const issuesByThread = new Map<string, ParsedIssue>();
 
   for (const issue of database.listProjectIssues(project.id)) {
-    if (issue.kind !== 'parent' || existingThreadIds.has(issue.threadId)) {
+    if (existingThreadIds.has(issue.threadId)) {
       continue;
     }
 

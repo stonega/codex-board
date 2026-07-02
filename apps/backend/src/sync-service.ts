@@ -33,22 +33,24 @@ export interface SyncOptions {
   onProgress?: (event: SyncProgressEvent) => void;
 }
 
+const PARSER_CONTRACT_VERSION = 'thread-issue-v2';
+
 function parserFingerprint(config: AppConfig): string {
   const provider = getParserProvider(config);
 
   if (provider === 'codex-cli') {
     if (!config.openAiModel) {
-      return 'fallback-only';
+      return `fallback-only:${PARSER_CONTRACT_VERSION}`;
     }
 
-    return `codex-cli:${config.openAiModel}:plain-json`;
+    return `codex-cli:${config.openAiModel}:plain-json:${PARSER_CONTRACT_VERSION}`;
   }
 
   if (!config.openAiBaseUrl || !config.openAiApiKey || !config.openAiModel) {
-    return 'fallback-only';
+    return `fallback-only:${PARSER_CONTRACT_VERSION}`;
   }
 
-  return `openai-compatible:${config.openAiBaseUrl}:${config.openAiModel}:key-configured`;
+  return `openai-compatible:${config.openAiBaseUrl}:${config.openAiModel}:key-configured:${PARSER_CONTRACT_VERSION}`;
 }
 
 function hasUpdatedRolloutFile(
@@ -183,7 +185,7 @@ export class SyncService {
           progress.skippedThreads = skippedThreads;
           parseLog.push({
             filePath: file.path,
-            threadId: previous.threadId,
+            threadId: previous?.threadId ?? null,
             repository: null,
             parseMode: null,
             issueCount: 0,
@@ -239,15 +241,10 @@ export class SyncService {
         const needsReviewCount = built.issues.filter(
           (issue) => issue.needsReview,
         ).length;
-        const parentCount = built.issues.filter(
-          (issue) => issue.kind === 'parent',
-        ).length;
-        const subIssueCount = built.issues.length - parentCount;
 
         this.database.upsertProject({
           ...built.project,
-          issueCount: parentCount,
-          subIssueCount,
+          issueCount: built.issues.length,
           needsReviewCount,
           lastUpdatedAt: candidate.updatedAt,
         });
@@ -259,9 +256,6 @@ export class SyncService {
 
         for (const issue of built.issues) {
           this.database.upsertIssue(issue);
-          if (issue.parentIssueId) {
-            this.database.recountSubIssues(issue.parentIssueId);
-          }
         }
 
         importedThreads += 1;
