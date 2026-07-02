@@ -154,7 +154,7 @@ export class UsageService {
   summary(query: UsageQuery = {}): UsageSummaryResponse {
     const events = this.database.listUsageEvents();
     const pricing = loadUsagePricing(this.config);
-    const range = resolveUsageRange(query);
+    const range = resolveUsageRange(query, events);
     const buckets = createDailyBuckets(range.startDate, range.endDate);
     const modelBuckets = new Map<string, UsageModelSummary>();
     const firstThreadDate = new Map<string, string>();
@@ -653,9 +653,16 @@ function usageModelCandidates(model: string): string[] {
   return [...new Set([trimmed, withoutContextLength].filter(Boolean))];
 }
 
-function resolveUsageRange(query: UsageQuery): UsageSummaryResponse['range'] {
+function resolveUsageRange(
+  query: UsageQuery,
+  events: UsageEventRecord[],
+): UsageSummaryResponse['range'] {
   const today = localDateKey(new Date().toISOString());
   const preset = normalizePreset(query.preset);
+
+  if (preset === 'all-time') {
+    return resolveAllTimeUsageRange(events, today);
+  }
 
   if (preset === 'custom' && query.startDate && query.endDate) {
     return {
@@ -673,8 +680,32 @@ function resolveUsageRange(query: UsageQuery): UsageSummaryResponse['range'] {
   };
 }
 
+function resolveAllTimeUsageRange(
+  events: UsageEventRecord[],
+  fallbackDate: string,
+): UsageSummaryResponse['range'] {
+  let startDate: string | null = null;
+  let endDate: string | null = null;
+
+  for (const event of events) {
+    const eventDay = localDateKey(event.eventTimestamp);
+    if (!startDate || eventDay < startDate) {
+      startDate = eventDay;
+    }
+    if (!endDate || eventDay > endDate) {
+      endDate = eventDay;
+    }
+  }
+
+  return {
+    preset: 'all-time',
+    startDate: startDate ?? fallbackDate,
+    endDate: endDate ?? fallbackDate,
+  };
+}
+
 function normalizePreset(value: string | null | undefined): UsageRangePreset {
-  if (value === 'last-30-days' || value === 'custom') {
+  if (value === 'last-30-days' || value === 'all-time' || value === 'custom') {
     return value;
   }
 

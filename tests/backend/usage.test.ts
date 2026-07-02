@@ -186,6 +186,34 @@ describe('usage api', () => {
           eventCount: 2,
         },
       });
+
+      const allTimeResponse = await server.app.request(
+        '/api/usage?range=all-time',
+      );
+      expect(allTimeResponse.status).toBe(200);
+      expect(await allTimeResponse.json()).toMatchObject({
+        range: {
+          preset: 'all-time',
+          startDate: '2026-05-31',
+          endDate: '2026-06-01',
+        },
+        summary: {
+          totalTokens: 1800,
+          cachedInputTokens: 400,
+          uncachedInputTokens: 1100,
+          reasoningOutputTokens: 75,
+          newThreadCount: 2,
+          eventCount: 2,
+        },
+        total: {
+          totalTokens: 1800,
+          cachedInputTokens: 400,
+          uncachedInputTokens: 1100,
+          reasoningOutputTokens: 75,
+          newThreadCount: 2,
+          eventCount: 2,
+        },
+      });
     } finally {
       server.close();
       rmSync(root, { force: true, recursive: true });

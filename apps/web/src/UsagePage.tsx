@@ -34,16 +34,19 @@ import {
 import { Input } from './components/ui/input';
 import { Select } from './components/ui/select';
 import { Table, TableEmpty, TableWrapper } from './components/ui/table';
+import { formatMoney, formatTokenAmount } from './lib/format';
 import { resolveApiBaseUrl } from './lib/runtime';
 
 const tokenAndCostConfig = {
   totalTokens: {
     label: 'Total tokens',
     color: 'var(--chart-1)',
+    format: (value) => formatTokenAmount(Number(value)),
   },
   estimatedCostUsd: {
     label: 'Estimated fee',
     color: 'var(--chart-2)',
+    format: (value) => formatMoney(Number(value)),
   },
 } satisfies ChartConfig;
 
@@ -51,6 +54,7 @@ const cachedInputConfig = {
   cachedInputTokens: {
     label: 'Cached input',
     color: 'var(--chart-2)',
+    format: (value) => formatTokenAmount(Number(value)),
   },
 } satisfies ChartConfig;
 
@@ -58,6 +62,7 @@ const uncachedInputConfig = {
   uncachedInputTokens: {
     label: 'Uncached input',
     color: 'var(--chart-3)',
+    format: (value) => formatTokenAmount(Number(value)),
   },
 } satisfies ChartConfig;
 
@@ -65,6 +70,7 @@ const reasoningConfig = {
   reasoningOutputTokens: {
     label: 'Reasoning output',
     color: 'var(--chart-4)',
+    format: (value) => formatTokenAmount(Number(value)),
   },
 } satisfies ChartConfig;
 
@@ -111,19 +117,6 @@ function formatNumber(value: number): string {
   return value.toLocaleString();
 }
 
-function formatMoney(value: number | null): string {
-  if (value === null) {
-    return 'Unpriced';
-  }
-
-  return value.toLocaleString(undefined, {
-    currency: 'USD',
-    maximumFractionDigits: 4,
-    minimumFractionDigits: 2,
-    style: 'currency',
-  });
-}
-
 function formatPercent(value: number): string {
   return `${Math.round(value * 100)}%`;
 }
@@ -151,7 +144,7 @@ function MetricCard({
   label,
   value,
   detail,
-  secondaryLabel = 'Total',
+  secondaryLabel = 'All time',
   secondaryValue,
 }: {
   icon: ReactNode;
@@ -245,6 +238,9 @@ export function UsagePage({ refreshToken = 0 }: { refreshToken?: number }) {
   const [customStartDate, setCustomStartDate] = useState(defaultStartDate);
   const [customEndDate, setCustomEndDate] = useState(defaultEndDate);
   const [usage, setUsage] = useState<UsageSummaryResponse | null>(null);
+  const [allTimeUsage, setAllTimeUsage] = useState<UsageSummaryResponse | null>(
+    null,
+  );
   const [error, setError] = useState<string | null>(null);
 
   const usageRequest = useMemo(
@@ -258,6 +254,13 @@ export function UsagePage({ refreshToken = 0 }: { refreshToken?: number }) {
       refreshToken,
     }),
     [rangePreset, customStartDate, customEndDate, refreshToken],
+  );
+  const allTimeUsageRequest = useMemo(
+    () => ({
+      path: '/usage?range=all-time',
+      refreshToken,
+    }),
+    [refreshToken],
   );
 
   useEffect(() => {
@@ -287,8 +290,28 @@ export function UsagePage({ refreshToken = 0 }: { refreshToken?: number }) {
     };
   }, [usageRequest, rangePreset, customStartDate, customEndDate]);
 
+  useEffect(() => {
+    let mounted = true;
+
+    void fetchUsage(allTimeUsageRequest.path)
+      .then((payload) => {
+        if (mounted) {
+          setAllTimeUsage(payload.range.preset === 'all-time' ? payload : null);
+        }
+      })
+      .catch(() => {
+        if (mounted) {
+          setAllTimeUsage(null);
+        }
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, [allTimeUsageRequest]);
+
   const daily = usage?.daily ?? [];
-  const totalSummary = usage?.total ?? usage?.summary;
+  const allTimeSummary = usage?.total ?? allTimeUsage?.summary;
 
   return (
     <div className="flex w-full flex-col gap-4 px-4 py-5 pb-12 sm:px-8 lg:px-10">
@@ -305,6 +328,10 @@ export function UsagePage({ refreshToken = 0 }: { refreshToken?: number }) {
               {usage
                 ? `${usage.range.startDate} to ${usage.range.endDate}`
                 : 'Local aggregate token history'}
+            </p>
+            <p className="mt-1 max-w-2xl text-[0.75rem] leading-snug text-notion-muted">
+              Local data only. Values are fetched from local logs and may differ
+              from official usage or billing data.
             </p>
           </div>
         </div>
@@ -351,32 +378,48 @@ export function UsagePage({ refreshToken = 0 }: { refreshToken?: number }) {
           detail={`${formatNumber(usage?.summary.eventCount ?? 0)} model calls`}
           icon={<Sigma />}
           label="Tokens"
-          secondaryValue={formatNumber(totalSummary?.totalTokens ?? 0)}
-          value={formatNumber(usage?.summary.totalTokens ?? 0)}
+          secondaryValue={
+            allTimeSummary
+              ? formatTokenAmount(allTimeSummary.totalTokens)
+              : undefined
+          }
+          value={formatTokenAmount(usage?.summary.totalTokens ?? 0)}
         />
         <MetricCard
           detail={
             usage?.pricing.unpricedTokens
-              ? `${formatNumber(usage.pricing.unpricedTokens)} unpriced tokens`
+              ? `${formatTokenAmount(usage.pricing.unpricedTokens)} unpriced tokens`
               : 'All selected tokens priced'
           }
           icon={<CircleDollarSign />}
           label="Estimated fee"
-          secondaryValue={formatMoney(totalSummary?.estimatedCostUsd ?? 0)}
+          secondaryValue={
+            allTimeSummary
+              ? formatMoney(allTimeSummary.estimatedCostUsd)
+              : undefined
+          }
           value={formatMoney(usage?.summary.estimatedCostUsd ?? 0)}
         />
         <MetricCard
-          detail={`${formatNumber(usage?.summary.cachedInputTokens ?? 0)} cached input`}
+          detail={`${formatTokenAmount(usage?.summary.cachedInputTokens ?? 0)} cached input`}
           icon={<RefreshCw />}
           label="Cache ratio"
-          secondaryValue={formatPercent(totalSummary?.cacheRatio ?? 0)}
+          secondaryValue={
+            allTimeSummary
+              ? formatPercent(allTimeSummary.cacheRatio)
+              : undefined
+          }
           value={formatPercent(usage?.summary.cacheRatio ?? 0)}
         />
         <MetricCard
           detail="New thread starts"
           icon={<CalendarDays />}
           label="Threads"
-          secondaryValue={formatNumber(totalSummary?.newThreadCount ?? 0)}
+          secondaryValue={
+            allTimeSummary
+              ? formatNumber(allTimeSummary.newThreadCount)
+              : undefined
+          }
           value={formatNumber(usage?.summary.newThreadCount ?? 0)}
         />
         <MetricCard
@@ -403,7 +446,7 @@ export function UsagePage({ refreshToken = 0 }: { refreshToken?: number }) {
           <>
             <YAxis
               axisLine={false}
-              tickFormatter={(value) => Number(value).toLocaleString()}
+              tickFormatter={(value) => formatTokenAmount(Number(value))}
               tickLine={false}
               width={56}
               yAxisId="tokens"
@@ -411,7 +454,7 @@ export function UsagePage({ refreshToken = 0 }: { refreshToken?: number }) {
             <YAxis
               axisLine={false}
               orientation="right"
-              tickFormatter={(value) => `$${Number(value).toFixed(2)}`}
+              tickFormatter={(value) => formatMoney(Number(value))}
               tickLine={false}
               width={48}
               yAxisId="cost"
@@ -445,7 +488,7 @@ export function UsagePage({ refreshToken = 0 }: { refreshToken?: number }) {
           <>
             <YAxis
               axisLine={false}
-              tickFormatter={(value) => Number(value).toLocaleString()}
+              tickFormatter={(value) => formatTokenAmount(Number(value))}
               tickLine={false}
               width={56}
             />
@@ -469,7 +512,7 @@ export function UsagePage({ refreshToken = 0 }: { refreshToken?: number }) {
           <>
             <YAxis
               axisLine={false}
-              tickFormatter={(value) => Number(value).toLocaleString()}
+              tickFormatter={(value) => formatTokenAmount(Number(value))}
               tickLine={false}
               width={56}
             />
@@ -493,7 +536,7 @@ export function UsagePage({ refreshToken = 0 }: { refreshToken?: number }) {
           <>
             <YAxis
               axisLine={false}
-              tickFormatter={(value) => Number(value).toLocaleString()}
+              tickFormatter={(value) => formatTokenAmount(Number(value))}
               tickLine={false}
               width={56}
             />
@@ -593,7 +636,7 @@ export function UsagePage({ refreshToken = 0 }: { refreshToken?: number }) {
                         <Badge>{model.pricingStatus}</Badge>
                       </td>
                       <td className="py-2 px-3 align-top text-right text-sm whitespace-nowrap">
-                        {formatNumber(model.totalTokens)}
+                        {formatTokenAmount(model.totalTokens)}
                       </td>
                       <td className="py-2 px-3 align-top text-right text-sm whitespace-nowrap">
                         {formatMoney(model.estimatedCostUsd)}

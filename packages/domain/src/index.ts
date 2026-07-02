@@ -106,7 +106,11 @@ export interface SkillSuggestion {
   suggestedSkillBody: string;
 }
 
-export type UsageRangePreset = 'last-7-days' | 'last-30-days' | 'custom';
+export type UsageRangePreset =
+  | 'last-7-days'
+  | 'last-30-days'
+  | 'all-time'
+  | 'custom';
 
 export interface UsageDailyPoint {
   date: string;

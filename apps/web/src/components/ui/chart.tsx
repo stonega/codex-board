@@ -8,6 +8,7 @@ export type ChartConfig = Record<
   {
     label?: React.ReactNode;
     color?: string;
+    format?: (value: string | number) => React.ReactNode;
   }
 >;
 
@@ -111,11 +112,13 @@ export function ChartTooltipContent({
           const itemConfig = config[key];
           const color = item.color ?? itemConfig?.color ?? 'var(--notion-blue)';
           const value =
-            typeof item.value === 'number'
-              ? item.value.toLocaleString(undefined, {
-                  maximumFractionDigits: 6,
-                })
-              : item.value;
+            itemConfig?.format && item.value !== undefined
+              ? itemConfig.format(item.value)
+              : typeof item.value === 'number'
+                ? item.value.toLocaleString(undefined, {
+                    maximumFractionDigits: 6,
+                  })
+                : item.value;
 
           return (
             <div className="flex items-center gap-2" key={key}>
